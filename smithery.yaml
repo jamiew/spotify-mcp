@@ -1,0 +1,37 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - spotifyClientId
+      - spotifyClientSecret
+    properties:
+      spotifyClientId:
+        type: string
+        description: Spotify Client ID for API access
+      spotifyClientSecret:
+        type: string
+        description: Spotify Client Secret for API access
+      spotifyRedirectUri:
+        type: string
+        default: http://localhost:8888
+        description: Spotify Redirect URI (must be http://localhost:PORT)
+  commandFunction:
+    # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
+    |-
+    (config) => ({
+      command: 'uv',
+      args: ['run', 'spotify-mcp'],
+      env: {
+        SPOTIFY_CLIENT_ID: config.spotifyClientId,
+        SPOTIFY_CLIENT_SECRET: config.spotifyClientSecret,
+        SPOTIFY_REDIRECT_URI: config.spotifyRedirectUri
+      }
+    })
+  exampleConfig:
+    spotifyClientId: yourClientIdHere
+    spotifyClientSecret: yourClientSecretHere
+    spotifyRedirectUri: http://localhost:8888
