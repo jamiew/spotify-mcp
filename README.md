@@ -1,5 +1,6 @@
 # spotify-mcp MCP server
 
+[![smithery badge](https://smithery.ai/badge/@jamiew/spotify-mcp)](https://smithery.ai/server/@jamiew/spotify-mcp)
 MCP project to connect Claude with Spotify. Built on top of [spotipy-dev's API](https://github.com/spotipy-dev/spotipy/tree/2.24.0).
 
 ## Features
@@ -116,3 +117,5 @@ npx @modelcontextprotocol/inspector uv --directory /Users/varun/Documents/Python
 
 
 Upon launching, the Inspector will display a URL that you can access in your browser to begin debugging.
+
+</readme>
