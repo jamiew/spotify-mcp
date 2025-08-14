@@ -33,7 +33,7 @@ class TestPlaybackControl:
         result = playback_control("get")
 
         assert isinstance(result, PlaybackState)
-        assert result.is_playing == True
+        assert result.is_playing
         assert result.track is not None
         assert result.track.name == "Never Gonna Give You Up"
         mock_spotify_api.current_user_playing_track.assert_called_once()
@@ -129,7 +129,7 @@ class TestSearchTracks:
         """Test search with custom limit."""
         mock_spotify_api.search.return_value = sample_search_results
 
-        result = search_tracks("test", limit=5)
+        search_tracks("test", limit=5)
 
         mock_spotify_api.search.assert_called_with(
             q="test", type="track", limit=5, offset=0
@@ -257,7 +257,7 @@ class TestCreatePlaylist:
         mock_spotify_api.current_user.return_value = {"id": "testuser"}
         mock_spotify_api.user_playlist_create.return_value = sample_playlist_data
 
-        result = create_playlist("Test Playlist", description="Test description")
+        create_playlist("Test Playlist", description="Test description")
 
         mock_spotify_api.user_playlist_create.assert_called_with(
             "testuser", "Test Playlist", public=True, description="Test description"
@@ -328,7 +328,7 @@ class TestGetUserPlaylists:
             "items": [sample_playlist_data]
         }
 
-        result = get_user_playlists(limit=10)
+        get_user_playlists(limit=10)
 
         mock_spotify_api.current_user_playlists.assert_called_with(limit=10, offset=0)
 

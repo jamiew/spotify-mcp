@@ -135,22 +135,22 @@ def parse_search_results(
     for q in qtype.split(","):
         match q:
             case "track":
-                for idx, item in enumerate(results["tracks"]["items"]):
+                for _idx, item in enumerate(results["tracks"]["items"]):
                     if not item:
                         continue
                     _results["tracks"].append(parse_track(item))
             case "artist":
-                for idx, item in enumerate(results["artists"]["items"]):
+                for _idx, item in enumerate(results["artists"]["items"]):
                     if not item:
                         continue
                     _results["artists"].append(parse_artist(item))
             case "playlist":
-                for idx, item in enumerate(results["playlists"]["items"]):
+                for _idx, item in enumerate(results["playlists"]["items"]):
                     if not item:
                         continue
                     _results["playlists"].append(parse_playlist(item))
             case "album":
-                for idx, item in enumerate(results["albums"]["items"]):
+                for _idx, item in enumerate(results["albums"]["items"]):
                     if not item:
                         continue
                     _results["albums"].append(parse_album(item))
@@ -218,7 +218,7 @@ def build_search_query(
     return quote(" ".join(query_parts))
 
 
-def validate(func: Callable[..., T]) -> Callable[..., T]:
+def validate[T](func: Callable[..., T]) -> Callable[..., T]:
     """
     Decorator for Spotify API methods that handles authentication and device validation.
     - Checks and refreshes authentication if needed

@@ -646,7 +646,7 @@ Workflow:
 3. Add tracks with add_tracks_to_playlist (supports up to 100 tracks per call)
 
 Pagination Tips:
-- Search results are paginated (limit=1-50, use offset for more results)  
+- Search results are paginated (limit=1-50, use offset for more results)
 - For variety, try multiple search queries with different offsets
 - Large playlists: batch add tracks in groups of 50-100
 
@@ -676,7 +676,7 @@ Step 2: Full analysis (if needed)
 
 Step 3: Analysis
 Based on analysis_type:
-- "overview": Basic stats, genres, mood distribution  
+- "overview": Basic stats, genres, mood distribution
 - "detailed": Track-by-track analysis, recommendations
 - "duplicates": Find duplicate tracks across large playlist
 - "mood": Analyze mood/energy progression through playlist
@@ -697,13 +697,13 @@ def discover_music_systematically(
 Search Strategy with Pagination:
 1. Initial search: search_tracks("{seed_query}", limit=20, offset=0)
 2. Diverse results: Use different offsets to explore deeper:
-   - Popular results: offset=0-20 
+   - Popular results: offset=0-20
    - Hidden gems: offset=20-40, offset=40-60
    - Deep cuts: offset=80-100+
 
 3. Related searches with pagination:
    - Artist names from initial results
-   - Album names from initial results  
+   - Album names from initial results
    - Genre + decade combinations
    - Similar mood/energy descriptors
 

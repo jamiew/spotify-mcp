@@ -62,7 +62,7 @@ class TestLoadConfig:
             }
         }
 
-        with patch("builtins.open", create=True) as mock_open:
+        with patch("builtins.open", create=True):
             with patch("tomllib.load", return_value=mock_toml_data):
                 with patch("pathlib.Path.exists", return_value=True):
                     config = load_config()
