@@ -2,7 +2,7 @@
 
 import json
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
 import mcp.types as types
 from spotipy import SpotifyException
@@ -231,10 +231,10 @@ def convert_spotify_error(e: Exception) -> Exception:
         return ValueError(f"Unexpected error: {str(e)}")
 
 
-def handle_spotify_error(func):
+def handle_spotify_error(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to handle Spotify API errors and convert them to MCP-compliant responses."""
 
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return func(*args, **kwargs)
         except SpotifyException as e:
@@ -253,10 +253,10 @@ def handle_spotify_error(func):
     return wrapper
 
 
-async def handle_spotify_error_async(func):
+async def handle_spotify_error_async(func: Callable[..., Any]) -> Callable[..., Any]:
     """Async decorator to handle Spotify API errors and convert them to MCP-compliant responses."""
 
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return await func(*args, **kwargs)
         except SpotifyException as e:
