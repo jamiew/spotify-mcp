@@ -87,7 +87,6 @@ def get_playlist_tracks_paginated(
     playlist_id: str, limit: int | None = None, offset: int = 0
 ) -> list[Track]:
     """Get playlist tracks with proper pagination support.
-
     Args:
         playlist_id: Spotify playlist ID
         limit: Maximum number of tracks to return (None for all)
@@ -120,7 +119,6 @@ def get_playlist_tracks_paginated(
                 batch_tracks.append(parse_track(item["track"]))
 
         tracks.extend(batch_tracks)
-
         # Update remaining count if we have a limit
         if remaining:
             remaining -= len(batch_tracks)
@@ -136,7 +134,6 @@ def get_playlist_tracks_paginated(
         # Safety check to prevent infinite loops
         if current_offset > 10000:
             break
-
     return tracks
 
 
@@ -210,7 +207,6 @@ def search_tracks(
 
     Returns:
         Dict with 'items' (list of tracks) and pagination info ('total', 'limit', 'offset')
-
     Note: For large result sets, use offset to paginate through results.
     Example: offset=0 gets results 1-10, offset=10 gets results 11-20, etc.
     """
@@ -223,7 +219,6 @@ def search_tracks(
         tracks = []
         items_key = f"{qtype}s"
         result_section = result.get(items_key, {})
-
         if qtype == "track" and result_section.get("items"):
             tracks = [parse_track(item) for item in result_section["items"]]
         else:
@@ -248,7 +243,6 @@ def search_tracks(
             "next": result_section.get("next"),
             "previous": result_section.get("previous"),
         }
-
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
@@ -259,7 +253,6 @@ def add_to_queue(track_id: str) -> dict[str, str]:
 
     Args:
         track_id: Spotify track ID to add to queue
-
     Returns:
         Dict with status and message
     """
@@ -273,7 +266,6 @@ def add_to_queue(track_id: str) -> dict[str, str]:
 @mcp.tool()
 def get_queue() -> dict[str, Any]:
     """Get the current playback queue.
-
     Returns:
         Dict with currently_playing track and queue of upcoming tracks
     """
@@ -300,7 +292,6 @@ def get_track_info(track_id: str) -> dict[str, Any]:
 
     Args:
         track_id: Spotify track ID
-
     Returns:
         Dict with complete track metadata
     """
@@ -317,7 +308,6 @@ def get_artist_info(artist_id: str) -> dict[str, Any]:
 
     Args:
         artist_id: Spotify artist ID
-
     Returns:
         Dict with artist info and top tracks
     """
