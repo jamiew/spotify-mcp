@@ -44,7 +44,7 @@ def load_config() -> dict[str, str | None]:
                 config["REDIRECT_URI"] = config["REDIRECT_URI"] or defaults.get(
                     "SPOTIFY_REDIRECT_URI"
                 )
-        except Exception:
+        except Exception:  # nosec B110 - intentional fallback for optional config file
             # Fallback to None if pyproject.toml reading fails
             pass
 

@@ -14,7 +14,7 @@ class SpotifyMCPErrorCode(Enum):
 
     # Authentication errors
     AUTHENTICATION_FAILED = "authentication_failed"
-    TOKEN_EXPIRED = "token_expired"
+    TOKEN_EXPIRED = "token_expired"  # nosec B105 - not a hardcoded password
     INSUFFICIENT_SCOPE = "insufficient_scope"
 
     # API errors
