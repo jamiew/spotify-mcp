@@ -2,22 +2,21 @@
 FastMCP test configuration and fixtures.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-from typing import Dict, Any
+
+import pytest
 
 # Sample Spotify API response data for testing
 SAMPLE_TRACK = {
     "id": "4iV5W9uYEdYUVa79Axb7Rh",
     "name": "Never Gonna Give You Up",
     "artists": [{"name": "Rick Astley", "id": "0gxyHStUsqpMadRV0Di1Qt"}],
-    "album": {
-        "name": "Whenever You Need Somebody",
-        "id": "6XzKGcM6laRkTrME3rQvJw"
-    },
+    "album": {"name": "Whenever You Need Somebody", "id": "6XzKGcM6laRkTrME3rQvJw"},
     "duration_ms": 213573,
     "popularity": 85,
-    "external_urls": {"spotify": "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh"}
+    "external_urls": {
+        "spotify": "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh"
+    },
 }
 
 SAMPLE_PLAYLIST = {
@@ -26,7 +25,9 @@ SAMPLE_PLAYLIST = {
     "description": "New music from hip-hop's underground",
     "owner": {"display_name": "Spotify", "id": "spotify"},
     "tracks": {"total": 50},
-    "external_urls": {"spotify": "https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd"}
+    "external_urls": {
+        "spotify": "https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd"
+    },
 }
 
 SAMPLE_PLAYBACK_STATE = {
@@ -35,7 +36,7 @@ SAMPLE_PLAYBACK_STATE = {
     "device": {"name": "My iPhone", "volume_percent": 70},
     "shuffle_state": False,
     "repeat_state": "off",
-    "progress_ms": 60000
+    "progress_ms": 60000,
 }
 
 SAMPLE_SEARCH_RESULTS = {
@@ -45,32 +46,32 @@ SAMPLE_SEARCH_RESULTS = {
         "limit": 10,
         "offset": 0,
         "next": None,
-        "previous": None
+        "previous": None,
     },
     "albums": {
-        "items": [], 
+        "items": [],
         "total": 0,
         "limit": 10,
         "offset": 0,
         "next": None,
-        "previous": None
+        "previous": None,
     },
     "artists": {
-        "items": [], 
+        "items": [],
         "total": 0,
         "limit": 10,
         "offset": 0,
         "next": None,
-        "previous": None
+        "previous": None,
     },
     "playlists": {
-        "items": [], 
+        "items": [],
         "total": 0,
         "limit": 10,
         "offset": 0,
         "next": None,
-        "previous": None
-    }
+        "previous": None,
+    },
 }
 
 
@@ -78,7 +79,7 @@ SAMPLE_SEARCH_RESULTS = {
 def mock_spotify_client():
     """Create a mocked Spotify client for testing."""
     mock_client = MagicMock()
-    
+
     # Mock common methods
     mock_client.current_playback.return_value = SAMPLE_PLAYBACK_STATE
     mock_client.search.return_value = SAMPLE_SEARCH_RESULTS
@@ -87,14 +88,14 @@ def mock_spotify_client():
     mock_client.track.return_value = SAMPLE_TRACK
     mock_client.playlist_add_items.return_value = {"snapshot_id": "test123"}
     mock_client.user_playlist_create.return_value = SAMPLE_PLAYLIST
-    
+
     return mock_client
 
 
 @pytest.fixture
 def mock_spotify_api(mock_spotify_client):
     """Mock the spotify_api module."""
-    with patch('spotify_mcp.fastmcp_server.spotify_client', mock_spotify_client):
+    with patch("spotify_mcp.fastmcp_server.spotify_client", mock_spotify_client):
         yield mock_spotify_client
 
 
@@ -104,7 +105,7 @@ def sample_track_data():
     return SAMPLE_TRACK
 
 
-@pytest.fixture 
+@pytest.fixture
 def sample_playlist_data():
     """Provide sample playlist data for tests."""
     return SAMPLE_PLAYLIST
