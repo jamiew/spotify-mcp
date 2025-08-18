@@ -5,6 +5,7 @@ Tests for Spotify API client.
 from unittest.mock import patch
 
 import pytest
+from spotipy.exceptions import SpotifyOauthError
 
 from spotify_mcp.spotify_api import Client, load_config
 
@@ -104,7 +105,7 @@ class TestSpotifyClient:
     @patch("spotify_mcp.spotify_api.REDIRECT_URI", "test_redirect_uri")
     def test_client_missing_credentials(self):
         """Test client initialization with missing credentials."""
-        with pytest.raises(Exception):
+        with pytest.raises(SpotifyOauthError):
             Client()
 
     def test_client_with_custom_logger(self):

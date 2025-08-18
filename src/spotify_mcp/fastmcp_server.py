@@ -193,7 +193,7 @@ def playback_control(
         )
 
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -250,7 +250,7 @@ def search_tracks(
         }
 
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -267,7 +267,7 @@ def add_to_queue(track_id: str) -> dict[str, str]:
         spotify_client.add_to_queue(f"spotify:track:{track_id}")
         return {"status": "success", "message": "Added track to queue"}
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -291,7 +291,7 @@ def get_queue() -> dict[str, Any]:
             "queue": [track.model_dump() for track in queue_tracks],
         }
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -308,7 +308,7 @@ def get_track_info(track_id: str) -> dict[str, Any]:
         result = spotify_client.track(track_id)
         return parse_track(result).model_dump()
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -340,7 +340,7 @@ def get_artist_info(artist_id: str) -> dict[str, Any]:
             "top_tracks": [track.model_dump() for track in tracks],
         }
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -373,7 +373,7 @@ def get_playlist_info(playlist_id: str) -> dict[str, Any]:
 
         return playlist.model_dump()
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -409,7 +409,7 @@ def create_playlist(
         return playlist.model_dump()
 
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -431,7 +431,7 @@ def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> dict[str,
         return {"status": "success", "message": f"Added {len(uris)} tracks to playlist"}
 
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -476,7 +476,7 @@ def get_user_playlists(limit: int = 20, offset: int = 0) -> dict[str, Any]:
         }
 
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -514,7 +514,7 @@ def get_playlist_tracks(
         }
 
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -541,7 +541,7 @@ def remove_tracks_from_playlist(
         }
 
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 @mcp.tool()
@@ -571,7 +571,7 @@ def modify_playlist_details(
         return {"status": "success", "message": "Playlist details updated successfully"}
 
     except SpotifyException as e:
-        raise convert_spotify_error(e)
+        raise convert_spotify_error(e) from e
 
 
 # === RESOURCES ===

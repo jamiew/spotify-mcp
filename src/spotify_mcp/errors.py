@@ -1,8 +1,9 @@
 """Custom error handling for Spotify MCP server."""
 
 import json
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 import mcp.types as types
 from spotipy import SpotifyException

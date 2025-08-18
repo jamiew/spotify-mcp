@@ -399,7 +399,7 @@ class TestErrorHandling:
 
         # Should raise the handled error
         with pytest.raises(
-            Exception
+            (SpotifyException, ValueError)
         ):  # handle_spotify_error converts to different exception
             playback_control("get")
 
