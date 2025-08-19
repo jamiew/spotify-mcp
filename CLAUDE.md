@@ -50,6 +50,7 @@ FastMCP-based MCP server for Spotify Web API integration using Python/`uv`.
 - **Pagination Support**: Handles large datasets (10k+ tracks) with `limit`/`offset` parameters
 - **OAuth Flow**: Automatic token management via spotipy
 - **Type Safety**: Full Pydantic validation and MyPy compliance
+- **Performance Logging**: Comprehensive timing and debug logging for tools and API calls
 
 ## Development Guidelines
 
