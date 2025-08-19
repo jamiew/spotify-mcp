@@ -26,7 +26,7 @@ FROM python:3.12-alpine AS runtime
 RUN pip install --no-cache-dir uv
 
 # Copy the built wheel and install it
-COPY --from=builder dist/*.whl /tmp/
+COPY --from=builder /app/dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 
 # Create non-root user for security
