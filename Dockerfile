@@ -7,6 +7,9 @@ RUN apk add --no-cache build-base
 # Install uv
 RUN pip install --no-cache-dir uv
 
+# Set working directory
+WORKDIR /app
+
 # Copy dependency files first for better caching
 COPY pyproject.toml uv.lock ./
 COPY src/ ./src/

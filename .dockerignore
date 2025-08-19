@@ -3,6 +3,11 @@
 .gitignore
 .gitattributes
 
+# System files
+/proc/
+/sys/
+/dev/
+
 # Python
 __pycache__/
 *.py[cod]
