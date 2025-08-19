@@ -1,5 +1,6 @@
 import signal
 import sys
+
 from .fastmcp_server import mcp
 
 
@@ -7,7 +8,7 @@ def main() -> None:
     """Main entry point for the package."""
     # Handle SIGPIPE gracefully (when client disconnects)
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-    
+
     try:
         mcp.run()
     except BrokenPipeError:

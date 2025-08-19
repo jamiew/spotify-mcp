@@ -13,7 +13,10 @@ from spotipy import SpotifyException
 
 import spotify_mcp.spotify_api as spotify_api
 from spotify_mcp.errors import convert_spotify_error
-from spotify_mcp.logging_utils import log_tool_execution, log_api_call, log_pagination_info, log_batch_operation
+from spotify_mcp.logging_utils import (
+    log_pagination_info,
+    log_tool_execution,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -21,8 +24,8 @@ logger = logging.getLogger(__name__)
 # Configure structured logging for better observability
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(name)s] [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S'
+    format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
 )
 
 # Create FastMCP app
@@ -112,7 +115,9 @@ def get_playlist_tracks_paginated(
     batch_size = min(limit, 100) if limit else 100  # Spotify API max is 100 per request
     remaining = limit
 
-    logger.info(f"📄 Starting paginated fetch for playlist {playlist_id} (limit={limit}, offset={offset})")
+    logger.info(
+        f"📄 Starting paginated fetch for playlist {playlist_id} (limit={limit}, offset={offset})"
+    )
 
     while True:
         # Determine how many to fetch in this batch
@@ -134,8 +139,10 @@ def get_playlist_tracks_paginated(
                 batch_tracks.append(parse_track(item["track"]))
 
         tracks.extend(batch_tracks)
-        logger.info(f"📄 Batch complete: retrieved {len(batch_tracks)} tracks (total so far: {len(tracks)})")
-        
+        logger.info(
+            f"📄 Batch complete: retrieved {len(batch_tracks)} tracks (total so far: {len(tracks)})"
+        )
+
         # Update remaining count if we have a limit
         if remaining:
             remaining -= len(batch_tracks)
@@ -150,9 +157,11 @@ def get_playlist_tracks_paginated(
 
         # Safety check to prevent infinite loops
         if current_offset > 10000:
-            logger.warning(f"⚠️ Safety limit reached: stopping at offset {current_offset}")
+            logger.warning(
+                f"⚠️ Safety limit reached: stopping at offset {current_offset}"
+            )
             break
-            
+
     logger.info(f"📄 Pagination complete: total {len(tracks)} tracks retrieved")
     return tracks
 
@@ -174,18 +183,18 @@ def playback_control(
     """
     try:
         if action == "get":
-            logger.info(f"🎵 Getting current playback state")
+            logger.info("🎵 Getting current playback state")
             result = spotify_client.current_user_playing_track()
         elif action == "start":
             if track_id:
                 logger.info(f"🎵 Starting playback of track: {track_id}")
                 spotify_client.start_playback(uris=[f"spotify:track:{track_id}"])
             else:
-                logger.info(f"🎵 Resuming playback")
+                logger.info("🎵 Resuming playback")
                 spotify_client.start_playback()
             result = spotify_client.current_user_playing_track()
         elif action == "pause":
-            logger.info(f"🎵 Pausing playback")
+            logger.info("🎵 Pausing playback")
             spotify_client.pause_playback()
             result = spotify_client.current_user_playing_track()
         elif action == "skip":
@@ -240,8 +249,10 @@ def search_tracks(
     try:
         # Validate limit (Spotify API accepts 1-50)
         limit = max(1, min(50, limit))
-        
-        logger.info(f"🔍 Searching {qtype}s: '{query}' (limit={limit}, offset={offset})")
+
+        logger.info(
+            f"🔍 Searching {qtype}s: '{query}' (limit={limit}, offset={offset})"
+        )
         result = spotify_client.search(q=query, type=qtype, limit=limit, offset=offset)
 
         tracks = []
@@ -264,7 +275,9 @@ def search_tracks(
                     tracks.append(track)
 
         total_results = result_section.get("total", 0)
-        logger.info(f"🔍 Search returned {len(tracks)} items (total available: {total_results})")
+        logger.info(
+            f"🔍 Search returned {len(tracks)} items (total available: {total_results})"
+        )
         log_pagination_info("search_tracks", total_results, limit, offset)
 
         return {
@@ -305,7 +318,7 @@ def get_queue() -> dict[str, Any]:
         Dict with currently_playing track and queue of upcoming tracks
     """
     try:
-        logger.info(f"🎵 Getting playback queue")
+        logger.info("🎵 Getting playback queue")
         result = spotify_client.queue()
 
         queue_tracks = []
@@ -461,7 +474,7 @@ def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> dict[str,
             uri if uri.startswith("spotify:track:") else f"spotify:track:{uri}"
             for uri in track_uris
         ]
-        
+
         logger.info(f"🎧 Adding {len(uris)} tracks to playlist {playlist_id}")
         spotify_client.playlist_add_items(playlist_id, uris)
         return {"status": "success", "message": f"Added {len(uris)} tracks to playlist"}
@@ -488,10 +501,10 @@ def get_user_playlists(limit: int = 20, offset: int = 0) -> dict[str, Any]:
     try:
         # Validate limit (Spotify API accepts 1-50)
         limit = max(1, min(50, limit))
-        
+
         logger.info(f"📋 Getting user playlists (limit={limit}, offset={offset})")
         result = spotify_client.current_user_playlists(limit=limit, offset=offset)
-        
+
         # Log pagination info
         log_pagination_info("get_user_playlists", result.get("total", 0), limit, offset)
 
@@ -541,13 +554,15 @@ def get_playlist_tracks(
     - Get all tracks: limit=None (use with caution on very large playlists)
     """
     try:
-        logger.info(f"📋 Getting playlist tracks: {playlist_id} (limit={limit}, offset={offset})")
+        logger.info(
+            f"📋 Getting playlist tracks: {playlist_id} (limit={limit}, offset={offset})"
+        )
         tracks = get_playlist_tracks_paginated(playlist_id, limit, offset)
 
         # Get total track count from playlist info
         playlist_info = spotify_client.playlist(playlist_id, fields="tracks.total")
         total_tracks = playlist_info.get("tracks", {}).get("total", len(tracks))
-        
+
         # Log pagination info
         log_pagination_info("get_playlist_tracks", total_tracks, limit, offset)
         logger.info(f"📋 Retrieved {len(tracks)} tracks from playlist {playlist_id}")
@@ -581,7 +596,7 @@ def remove_tracks_from_playlist(
             uri if uri.startswith("spotify:track:") else f"spotify:track:{uri}"
             for uri in track_uris
         ]
-        
+
         logger.info(f"🚮 Removing {len(uris)} tracks from playlist {playlist_id}")
         spotify_client.playlist_remove_all_occurrences_of_items(playlist_id, uris)
         return {
@@ -616,11 +631,14 @@ def modify_playlist_details(
             )
 
         updates = []
-        if name: updates.append(f"name='{name}'")
-        if description: updates.append(f"description='{description}'")
-        if public is not None: updates.append(f"public={public}")
+        if name:
+            updates.append(f"name='{name}'")
+        if description:
+            updates.append(f"description='{description}'")
+        if public is not None:
+            updates.append(f"public={public}")
         logger.info(f"📋 Modifying playlist {playlist_id}: {', '.join(updates)}")
-        
+
         spotify_client.playlist_change_details(
             playlist_id, name=name, description=description, public=public
         )
