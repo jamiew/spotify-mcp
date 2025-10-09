@@ -1,7 +1,5 @@
 # spotify-mcp MCP server
 
-[![smithery badge](https://smithery.ai/badge/@jamiew/spotify-mcp)](https://smithery.ai/server/@jamiew/spotify-mcp)
-
 MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](https://github.com/varunneal/spotify-mcp) adds smart-batching tools and advanced playlist features that optimize API usage.
 
 ## Features
@@ -23,21 +21,19 @@ MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](
 1. Create account at [developer.spotify.com](https://developer.spotify.com/)
 2. Create app with redirect URI: `http://localhost:8888`
 
-### 2. Install via Smithery (Recommended)
-```bash
-npx -y @smithery/cli install @jamiew/spotify-mcp --client claude
-```
-
-### 3. Manual Installation
+### 2. Install the MCP Server
 ```bash
 git clone https://github.com/jamiew/spotify-mcp.git
+cd spotify-mcp
+uv sync
 ```
 
+### 3. Configure Claude Desktop
 Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
 "spotify": {
   "command": "uv",
-  "args": ["--directory", "/path/to/spotify_mcp", "run", "spotify-mcp"],
+  "args": ["--directory", "/path/to/spotify-mcp", "run", "spotify-mcp"],
   "env": {
     "SPOTIFY_CLIENT_ID": "YOUR_CLIENT_ID",
     "SPOTIFY_CLIENT_SECRET": "YOUR_CLIENT_SECRET",
