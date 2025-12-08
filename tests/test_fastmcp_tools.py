@@ -209,9 +209,11 @@ class TestItemInfo:
 
         result = get_track_info("4iV5W9uYEdYUVa79Axb7Rh")
 
-        assert isinstance(result, dict)  # Returns dict, not Track object
-        assert result["name"] == "Never Gonna Give You Up"
-        assert result["artist"] == "Rick Astley"
+        assert isinstance(result, dict)
+        assert "tracks" in result
+        assert len(result["tracks"]) == 1
+        assert result["tracks"][0]["name"] == "Never Gonna Give You Up"
+        assert result["tracks"][0]["artist"] == "Rick Astley"
         mock_spotify_api.track.assert_called_once_with("4iV5W9uYEdYUVa79Axb7Rh")
 
     def test_get_playlist_info(self, mock_spotify_api, sample_playlist_data):

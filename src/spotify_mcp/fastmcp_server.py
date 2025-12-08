@@ -45,6 +45,8 @@ class Track(BaseModel):
     artist: str
     artists: list[str] | None = None
     album: str | None = None
+    album_id: str | None = None
+    release_date: str | None = None
     duration_ms: int | None = None
     popularity: int | None = None
     external_urls: dict[str, str] | None = None
@@ -84,14 +86,52 @@ class Artist(BaseModel):
     followers: int | None = None
 
 
+class Album(BaseModel):
+    """A Spotify album."""
+
+    name: str
+    id: str
+    artist: str
+    artists: list[str] | None = None
+    release_date: str | None = None
+    release_date_precision: str | None = None
+    total_tracks: int | None = None
+    album_type: str | None = None
+    label: str | None = None
+    genres: list[str] | None = None
+    popularity: int | None = None
+    external_urls: dict[str, str] | None = None
+
+
+class AudioFeatures(BaseModel):
+    """Audio features for a track."""
+
+    id: str
+    tempo: float | None = None
+    key: int | None = None
+    mode: int | None = None
+    time_signature: int | None = None
+    danceability: float | None = None
+    energy: float | None = None
+    valence: float | None = None
+    loudness: float | None = None
+    speechiness: float | None = None
+    acousticness: float | None = None
+    instrumentalness: float | None = None
+    liveness: float | None = None
+
+
 def parse_track(item: dict[str, Any]) -> Track:
     """Parse Spotify track data into Track model."""
+    album_data = item.get("album", {})
     return Track(
         name=item["name"],
         id=item["id"],
         artist=item["artists"][0]["name"] if item.get("artists") else "Unknown",
         artists=[a["name"] for a in item.get("artists", [])],
-        album=item.get("album", {}).get("name"),
+        album=album_data.get("name"),
+        album_id=album_data.get("id"),
+        release_date=album_data.get("release_date"),
         duration_ms=item.get("duration_ms"),
         popularity=item.get("popularity"),
         external_urls=item.get("external_urls"),
@@ -231,7 +271,15 @@ def playback_control(
 @mcp.tool()
 @log_tool_execution
 def search_tracks(
-    query: str, qtype: str = "track", limit: int = 10, offset: int = 0
+    query: str,
+    qtype: str = "track",
+    limit: int = 10,
+    offset: int = 0,
+    year: str | None = None,
+    year_range: str | None = None,
+    genre: str | None = None,
+    artist: str | None = None,
+    album: str | None = None,
 ) -> dict[str, Any]:
     """Search Spotify for tracks, albums, artists, or playlists.
 
@@ -240,20 +288,40 @@ def search_tracks(
         qtype: Type ('track', 'album', 'artist', 'playlist')
         limit: Max results per page (1-50, default 10)
         offset: Number of results to skip for pagination (default 0)
+        year: Filter by year (e.g., '2024')
+        year_range: Filter by year range (e.g., '2020-2024')
+        genre: Filter by genre (e.g., 'electronic', 'hip-hop')
+        artist: Filter by artist name
+        album: Filter by album name
 
     Returns:
         Dict with 'items' (list of tracks) and pagination info ('total', 'limit', 'offset')
-    Note: For large result sets, use offset to paginate through results.
-    Example: offset=0 gets results 1-10, offset=10 gets results 11-20, etc.
+
+    Note: Filters use Spotify's search syntax. For large result sets, use offset to paginate.
+    Example: query='love', year='2024', genre='pop' searches for 'love year:2024 genre:pop'
     """
     try:
-        # Validate limit (Spotify API accepts 1-50)
         limit = max(1, min(50, limit))
 
+        # Build filtered query
+        filters = []
+        if artist:
+            filters.append(f"artist:{artist}")
+        if album:
+            filters.append(f"album:{album}")
+        if year:
+            filters.append(f"year:{year}")
+        if year_range:
+            filters.append(f"year:{year_range}")
+        if genre:
+            filters.append(f"genre:{genre}")
+
+        full_query = " ".join([query] + filters) if filters else query
+
         logger.info(
-            f"🔍 Searching {qtype}s: '{query}' (limit={limit}, offset={offset})"
+            f"🔍 Searching {qtype}s: '{full_query}' (limit={limit}, offset={offset})"
         )
-        result = spotify_client.search(q=query, type=qtype, limit=limit, offset=offset)
+        result = spotify_client.search(q=full_query, type=qtype, limit=limit, offset=offset)
 
         tracks = []
         items_key = f"{qtype}s"
@@ -337,18 +405,39 @@ def get_queue() -> dict[str, Any]:
 
 @mcp.tool()
 @log_tool_execution
-def get_track_info(track_id: str) -> dict[str, Any]:
-    """Get detailed information about a Spotify track.
+def get_track_info(track_ids: str | list[str]) -> dict[str, Any]:
+    """Get detailed information about one or more Spotify tracks.
 
     Args:
-        track_id: Spotify track ID
+        track_ids: Single track ID or list of track IDs (up to 50)
+
     Returns:
-        Dict with complete track metadata
+        Dict with 'tracks' list containing track metadata including release_date.
+        For single ID, returns {'tracks': [track]}.
+
+    Note: Batch lookup is much more efficient - 50 tracks = 1 API call instead of 50.
     """
     try:
-        logger.info(f"🎵 Getting track info: {track_id}")
-        result = spotify_client.track(track_id)
-        return parse_track(result).model_dump()
+        # Normalize to list
+        ids = [track_ids] if isinstance(track_ids, str) else track_ids
+
+        if len(ids) > 50:
+            raise ValueError("Maximum 50 track IDs per request (Spotify API limit)")
+
+        logger.info(f"🎵 Getting track info for {len(ids)} track(s)")
+
+        if len(ids) == 1:
+            result = spotify_client.track(ids[0])
+            tracks = [parse_track(result).model_dump()]
+        else:
+            result = spotify_client.tracks(ids)
+            tracks = [
+                parse_track(item).model_dump()
+                for item in result.get("tracks", [])
+                if item
+            ]
+
+        return {"tracks": tracks}
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
@@ -644,6 +733,210 @@ def modify_playlist_details(
         )
         return {"status": "success", "message": "Playlist details updated successfully"}
 
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool()
+@log_tool_execution
+def get_album_info(album_id: str) -> dict[str, Any]:
+    """Get detailed information about a Spotify album.
+
+    Args:
+        album_id: Spotify album ID
+
+    Returns:
+        Dict with album metadata including release_date, label, tracks
+    """
+    try:
+        logger.info(f"💿 Getting album info: {album_id}")
+        result = spotify_client.album(album_id)
+
+        album = Album(
+            name=result["name"],
+            id=result["id"],
+            artist=result["artists"][0]["name"] if result.get("artists") else "Unknown",
+            artists=[a["name"] for a in result.get("artists", [])],
+            release_date=result.get("release_date"),
+            release_date_precision=result.get("release_date_precision"),
+            total_tracks=result.get("total_tracks"),
+            album_type=result.get("album_type"),
+            label=result.get("label"),
+            genres=result.get("genres", []),
+            popularity=result.get("popularity"),
+            external_urls=result.get("external_urls"),
+        )
+
+        # Parse album tracks
+        tracks = []
+        for item in result.get("tracks", {}).get("items", []):
+            if item:
+                # Album track items don't have album info, add it
+                item["album"] = {
+                    "name": result["name"],
+                    "id": result["id"],
+                    "release_date": result.get("release_date"),
+                }
+                tracks.append(parse_track(item).model_dump())
+
+        return {
+            "album": album.model_dump(),
+            "tracks": tracks,
+        }
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool()
+@log_tool_execution
+def get_audio_features(track_ids: str | list[str]) -> dict[str, Any]:
+    """Get audio features for one or more tracks (tempo, key, energy, danceability, etc).
+
+    Args:
+        track_ids: Single track ID or list of track IDs (up to 100)
+
+    Returns:
+        Dict with 'features' list containing audio features for each track.
+        Features include: tempo, key, mode, time_signature, danceability, energy,
+        valence, loudness, speechiness, acousticness, instrumentalness, liveness.
+
+    Note: Batch lookup is efficient - 100 tracks = 1 API call.
+    """
+    try:
+        # Normalize to list
+        ids = [track_ids] if isinstance(track_ids, str) else track_ids
+
+        if len(ids) > 100:
+            raise ValueError("Maximum 100 track IDs per request (Spotify API limit)")
+
+        logger.info(f"🎼 Getting audio features for {len(ids)} track(s)")
+        result = spotify_client.audio_features(ids)
+
+        features_list = []
+        for features in result:
+            if features:
+                audio = AudioFeatures(
+                    id=features["id"],
+                    tempo=features.get("tempo"),
+                    key=features.get("key"),
+                    mode=features.get("mode"),
+                    time_signature=features.get("time_signature"),
+                    danceability=features.get("danceability"),
+                    energy=features.get("energy"),
+                    valence=features.get("valence"),
+                    loudness=features.get("loudness"),
+                    speechiness=features.get("speechiness"),
+                    acousticness=features.get("acousticness"),
+                    instrumentalness=features.get("instrumentalness"),
+                    liveness=features.get("liveness"),
+                )
+                features_list.append(audio.model_dump())
+
+        return {"features": features_list}
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool()
+@log_tool_execution
+def get_saved_tracks(limit: int = 20, offset: int = 0) -> dict[str, Any]:
+    """Get user's saved/liked tracks (Liked Songs library).
+
+    Args:
+        limit: Max tracks to return per page (1-50, default 20)
+        offset: Number of tracks to skip for pagination (default 0)
+
+    Returns:
+        Dict with 'items' (list of tracks with added_at timestamp) and pagination info
+    """
+    try:
+        limit = max(1, min(50, limit))
+
+        logger.info(f"❤️ Getting saved tracks (limit={limit}, offset={offset})")
+        result = spotify_client.current_user_saved_tracks(limit=limit, offset=offset)
+
+        tracks = []
+        for item in result.get("items", []):
+            if item and item.get("track"):
+                track_data = parse_track(item["track"]).model_dump()
+                track_data["added_at"] = item.get("added_at")
+                tracks.append(track_data)
+
+        log_pagination_info("get_saved_tracks", result.get("total", 0), limit, offset)
+
+        return {
+            "items": tracks,
+            "total": result.get("total", 0),
+            "limit": result.get("limit", limit),
+            "offset": result.get("offset", offset),
+            "next": result.get("next"),
+            "previous": result.get("previous"),
+        }
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool()
+@log_tool_execution
+def get_recommendations(
+    seed_artists: list[str] | None = None,
+    seed_tracks: list[str] | None = None,
+    seed_genres: list[str] | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Get track recommendations based on seed artists, tracks, or genres.
+
+    Args:
+        seed_artists: List of artist IDs (up to 5 total seeds combined)
+        seed_tracks: List of track IDs (up to 5 total seeds combined)
+        seed_genres: List of genres (up to 5 total seeds combined)
+        limit: Number of recommendations to return (1-100, default 20)
+
+    Returns:
+        Dict with 'tracks' list of recommended tracks
+
+    Note: Total seeds (artists + tracks + genres) must be between 1 and 5.
+    Use search_tracks to find seed track/artist IDs, or common genres like:
+    'pop', 'rock', 'hip-hop', 'electronic', 'jazz', 'classical', 'r-n-b', 'country'
+    """
+    try:
+        # Validate seeds
+        total_seeds = (
+            len(seed_artists or [])
+            + len(seed_tracks or [])
+            + len(seed_genres or [])
+        )
+        if total_seeds == 0:
+            raise ValueError("At least one seed (artist, track, or genre) is required")
+        if total_seeds > 5:
+            raise ValueError("Maximum 5 total seeds allowed (artists + tracks + genres)")
+
+        limit = max(1, min(100, limit))
+
+        logger.info(
+            f"🎲 Getting recommendations (artists={seed_artists}, "
+            f"tracks={seed_tracks}, genres={seed_genres}, limit={limit})"
+        )
+        result = spotify_client.recommendations(
+            seed_artists=seed_artists,
+            seed_tracks=seed_tracks,
+            seed_genres=seed_genres,
+            limit=limit,
+        )
+
+        tracks = []
+        for item in result.get("tracks", []):
+            if item:
+                tracks.append(parse_track(item).model_dump())
+
+        return {
+            "tracks": tracks,
+            "seeds": {
+                "artists": seed_artists or [],
+                "tracks": seed_tracks or [],
+                "genres": seed_genres or [],
+            },
+        }
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
