@@ -31,6 +31,9 @@ jobs:
     - name: Set up project
       run: uv sync --dev
 
+    - name: Run type checking
+      run: uv run mypy src/
+
     - name: Run tests
       run: uv run pytest
 
