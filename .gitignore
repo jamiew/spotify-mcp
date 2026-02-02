@@ -1,5 +1,6 @@
 .env*
 .cache
+.claude/settings.local.json
 .coverage
 .DS_Store
 **/__pycache__
