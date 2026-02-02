@@ -37,8 +37,15 @@ jobs:
     - name: Run type checking
       run: uv run mypy src/
 
-    - name: Run tests
-      run: uv run pytest
+    - name: Run tests with coverage
+      run: uv run pytest --cov=src/spotify_mcp --cov-report=xml --cov-report=term-missing
+
+    - name: Upload coverage to Codecov
+      if: matrix.python-version == '3.12'
+      uses: codecov/codecov-action@v5
+      with:
+        files: coverage.xml
+        fail_ci_if_error: false
 
   lint:
     runs-on: ubuntu-latest
@@ -147,12 +154,12 @@ jobs:
       run: |
         # Test that image was built and can run basic commands
         docker run --rm spotify-mcp:test python --version
-        
+
         # Test that entry point is installed and accessible
         docker run --rm spotify-mcp:test which spotify-mcp
-        
+
         # Test that application starts without errors (with proper env vars)
         docker run --rm -e SPOTIFY_CLIENT_ID=test -e SPOTIFY_CLIENT_SECRET=test -e SPOTIFY_REDIRECT_URI=http://localhost:8888 spotify-mcp:test python -c "print('✅ Docker image works correctly')"
-        
+
         # Test security: ensure running as non-root user
         docker run --rm spotify-mcp:test sh -c 'whoami | grep -v root'

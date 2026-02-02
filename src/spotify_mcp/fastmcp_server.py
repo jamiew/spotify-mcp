@@ -321,7 +321,9 @@ def search_tracks(
         logger.info(
             f"🔍 Searching {qtype}s: '{full_query}' (limit={limit}, offset={offset})"
         )
-        result = spotify_client.search(q=full_query, type=qtype, limit=limit, offset=offset)
+        result = spotify_client.search(
+            q=full_query, type=qtype, limit=limit, offset=offset
+        )
 
         tracks = []
         items_key = f"{qtype}s"
@@ -902,14 +904,14 @@ def get_recommendations(
     try:
         # Validate seeds
         total_seeds = (
-            len(seed_artists or [])
-            + len(seed_tracks or [])
-            + len(seed_genres or [])
+            len(seed_artists or []) + len(seed_tracks or []) + len(seed_genres or [])
         )
         if total_seeds == 0:
             raise ValueError("At least one seed (artist, track, or genre) is required")
         if total_seeds > 5:
-            raise ValueError("Maximum 5 total seeds allowed (artists + tracks + genres)")
+            raise ValueError(
+                "Maximum 5 total seeds allowed (artists + tracks + genres)"
+            )
 
         limit = max(1, min(100, limit))
 

@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+        enable-cache: true
+
+    - name: Set up project
+      run: uv sync --dev
+
+    - name: Run tests
+      run: uv run pytest
+
+    - name: Build package
+      run: uv build
+
+    - name: Extract version from tag
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get commits since last tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -n "$PREV_TAG" ]; then
+          CHANGES=$(git log --pretty=format:"- %s" ${PREV_TAG}..HEAD --no-merges)
+        else
+          CHANGES=$(git log --pretty=format:"- %s" --no-merges -20)
+        fi
+        echo "CHANGES<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGES" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: v${{ steps.version.outputs.VERSION }}
+        body: |
+          ## Changes
+          ${{ steps.changelog.outputs.CHANGES }}
+
+          ## Installation
+          ```bash
+          pip install spotify-mcp==${{ steps.version.outputs.VERSION }}
+          ```
+
+          Or with uv:
+          ```bash
+          uv add spotify-mcp==${{ steps.version.outputs.VERSION }}
+          ```
+        files: |
+          dist/*
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
