@@ -1,12 +1,15 @@
 """Custom error handling for Spotify MCP server."""
+from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import mcp.types as types
 from spotipy import SpotifyException
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class SpotifyMCPErrorCode(Enum):
@@ -83,7 +86,7 @@ class SpotifyMCPError(Exception):
         return types.TextContent(type="text", text=json.dumps(error_response, indent=2))
 
     @classmethod
-    def from_spotify_exception(cls, exc: SpotifyException) -> "SpotifyMCPError":
+    def from_spotify_exception(cls, exc: SpotifyException) -> SpotifyMCPError:
         """Create SpotifyMCPError from spotipy SpotifyException."""
         status_code = getattr(exc, "http_status", None)
         error_message = str(exc)
@@ -190,7 +193,7 @@ class SpotifyMCPError(Exception):
         )
 
     @classmethod
-    def validation_error(cls, field: str, message: str) -> "SpotifyMCPError":
+    def validation_error(cls, field: str, message: str) -> SpotifyMCPError:
         """Create a validation error."""
         return cls(
             SpotifyMCPErrorCode.VALIDATION_ERROR,
@@ -200,7 +203,7 @@ class SpotifyMCPError(Exception):
         )
 
     @classmethod
-    def no_active_device(cls) -> "SpotifyMCPError":
+    def no_active_device(cls) -> SpotifyMCPError:
         """Create a no active device error."""
         return cls(
             SpotifyMCPErrorCode.NO_ACTIVE_DEVICE,
@@ -210,7 +213,7 @@ class SpotifyMCPError(Exception):
         )
 
     @classmethod
-    def premium_required(cls, operation: str) -> "SpotifyMCPError":
+    def premium_required(cls, operation: str) -> SpotifyMCPError:
         """Create a premium required error."""
         return cls(
             SpotifyMCPErrorCode.PREMIUM_REQUIRED,
