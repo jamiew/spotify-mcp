@@ -1,16 +1,20 @@
+from __future__ import annotations
+
 import logging
 import os
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import spotipy
 from dotenv import load_dotenv
-from spotipy.cache_handler import CacheFileHandler
 from spotipy.oauth2 import SpotifyOAuth
 
 from . import utils
 from .utils import normalize_redirect_uri
+
+if TYPE_CHECKING:
+    from spotipy.cache_handler import CacheFileHandler
 
 
 def load_config() -> dict[str, str | None]:
