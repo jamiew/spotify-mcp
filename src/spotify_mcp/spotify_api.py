@@ -128,17 +128,6 @@ class Client:
         search_results = utils.parse_search_results(results, qtype)
         return search_results if search_results else {}
 
-    def recommendations(
-        self,
-        artists: list[str] | None = None,
-        tracks: list[str] | None = None,
-        limit: int = 20,
-    ) -> dict[str, Any]:
-        recs = self.sp.recommendations(
-            seed_artists=artists, seed_tracks=tracks, limit=limit
-        )
-        return recs if recs else {}
-
     def get_info(self, item_id: str, qtype: str = "track") -> dict[str, Any]:
         """
         Returns more info about item.

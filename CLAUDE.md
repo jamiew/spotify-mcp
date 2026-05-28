@@ -41,12 +41,12 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 FastMCP-based MCP server for Spotify Web API integration using Python/`uv`.
 
 ### Core Files
-- **`src/spotify_mcp/fastmcp_server.py`** - Main MCP server with 13 tools using `@mcp.tool()` decorators
+- **`src/spotify_mcp/fastmcp_server.py`** - Main MCP server with 11 tools using `@mcp.tool()` decorators
 - **`src/spotify_mcp/spotify_api.py`** - Spotify API wrapper with OAuth authentication  
 - **`src/spotify_mcp/utils.py`** - Data parsing and validation utilities
 
 ### Key Features
-- **13 MCP Tools**: Playback control, search, queue management, playlist operations, track/artist info
+- **11 MCP Tools**: Playback control, search, queue management, playlist operations, track/artist info
 - **Pagination Support**: Handles large datasets (10k+ tracks) with `limit`/`offset` parameters
 - **OAuth Flow**: Automatic token management via spotipy
 - **Type Safety**: Full Pydantic validation and MyPy compliance

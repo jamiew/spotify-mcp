@@ -103,24 +103,6 @@ class Album(BaseModel):
     external_urls: dict[str, str] | None = None
 
 
-class AudioFeatures(BaseModel):
-    """Audio features for a track."""
-
-    id: str
-    tempo: float | None = None
-    key: int | None = None
-    mode: int | None = None
-    time_signature: int | None = None
-    danceability: float | None = None
-    energy: float | None = None
-    valence: float | None = None
-    loudness: float | None = None
-    speechiness: float | None = None
-    acousticness: float | None = None
-    instrumentalness: float | None = None
-    liveness: float | None = None
-
-
 def parse_track(item: dict[str, Any]) -> Track:
     """Parse Spotify track data into Track model."""
     album_data = item.get("album", {})
@@ -789,56 +771,6 @@ def get_album_info(album_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 @log_tool_execution
-def get_audio_features(track_ids: str | list[str]) -> dict[str, Any]:
-    """Get audio features for one or more tracks (tempo, key, energy, danceability, etc).
-
-    Args:
-        track_ids: Single track ID or list of track IDs (up to 100)
-
-    Returns:
-        Dict with 'features' list containing audio features for each track.
-        Features include: tempo, key, mode, time_signature, danceability, energy,
-        valence, loudness, speechiness, acousticness, instrumentalness, liveness.
-
-    Note: Batch lookup is efficient - 100 tracks = 1 API call.
-    """
-    try:
-        # Normalize to list
-        ids = [track_ids] if isinstance(track_ids, str) else track_ids
-
-        if len(ids) > 100:
-            raise ValueError("Maximum 100 track IDs per request (Spotify API limit)")
-
-        logger.info(f"🎼 Getting audio features for {len(ids)} track(s)")
-        result = spotify_client.audio_features(ids)
-
-        features_list = []
-        for features in result:
-            if features:
-                audio = AudioFeatures(
-                    id=features["id"],
-                    tempo=features.get("tempo"),
-                    key=features.get("key"),
-                    mode=features.get("mode"),
-                    time_signature=features.get("time_signature"),
-                    danceability=features.get("danceability"),
-                    energy=features.get("energy"),
-                    valence=features.get("valence"),
-                    loudness=features.get("loudness"),
-                    speechiness=features.get("speechiness"),
-                    acousticness=features.get("acousticness"),
-                    instrumentalness=features.get("instrumentalness"),
-                    liveness=features.get("liveness"),
-                )
-                features_list.append(audio.model_dump())
-
-        return {"features": features_list}
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
-
-
-@mcp.tool()
-@log_tool_execution
 def get_saved_tracks(limit: int = 20, offset: int = 0) -> dict[str, Any]:
     """Get user's saved/liked tracks (Liked Songs library).
 
@@ -871,71 +803,6 @@ def get_saved_tracks(limit: int = 20, offset: int = 0) -> dict[str, Any]:
             "offset": result.get("offset", offset),
             "next": result.get("next"),
             "previous": result.get("previous"),
-        }
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
-
-
-@mcp.tool()
-@log_tool_execution
-def get_recommendations(
-    seed_artists: list[str] | None = None,
-    seed_tracks: list[str] | None = None,
-    seed_genres: list[str] | None = None,
-    limit: int = 20,
-) -> dict[str, Any]:
-    """Get track recommendations based on seed artists, tracks, or genres.
-
-    Args:
-        seed_artists: List of artist IDs (up to 5 total seeds combined)
-        seed_tracks: List of track IDs (up to 5 total seeds combined)
-        seed_genres: List of genres (up to 5 total seeds combined)
-        limit: Number of recommendations to return (1-100, default 20)
-
-    Returns:
-        Dict with 'tracks' list of recommended tracks
-
-    Note: Total seeds (artists + tracks + genres) must be between 1 and 5.
-    Use search_tracks to find seed track/artist IDs, or common genres like:
-    'pop', 'rock', 'hip-hop', 'electronic', 'jazz', 'classical', 'r-n-b', 'country'
-    """
-    try:
-        # Validate seeds
-        total_seeds = (
-            len(seed_artists or [])
-            + len(seed_tracks or [])
-            + len(seed_genres or [])
-        )
-        if total_seeds == 0:
-            raise ValueError("At least one seed (artist, track, or genre) is required")
-        if total_seeds > 5:
-            raise ValueError("Maximum 5 total seeds allowed (artists + tracks + genres)")
-
-        limit = max(1, min(100, limit))
-
-        logger.info(
-            f"🎲 Getting recommendations (artists={seed_artists}, "
-            f"tracks={seed_tracks}, genres={seed_genres}, limit={limit})"
-        )
-        result = spotify_client.recommendations(
-            seed_artists=seed_artists,
-            seed_tracks=seed_tracks,
-            seed_genres=seed_genres,
-            limit=limit,
-        )
-
-        tracks = []
-        for item in result.get("tracks", []):
-            if item:
-                tracks.append(parse_track(item).model_dump())
-
-        return {
-            "tracks": tracks,
-            "seeds": {
-                "artists": seed_artists or [],
-                "tracks": seed_tracks or [],
-                "genres": seed_genres or [],
-            },
         }
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
