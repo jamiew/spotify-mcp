@@ -303,7 +303,9 @@ def search_tracks(
         logger.info(
             f"🔍 Searching {qtype}s: '{full_query}' (limit={limit}, offset={offset})"
         )
-        result = spotify_client.search(q=full_query, type=qtype, limit=limit, offset=offset)
+        result = spotify_client.search(
+            q=full_query, type=qtype, limit=limit, offset=offset
+        )
 
         tracks = []
         items_key = f"{qtype}s"

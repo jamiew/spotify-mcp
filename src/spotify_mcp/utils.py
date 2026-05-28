@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import functools
 from collections import defaultdict
-from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import quote, urlparse, urlunparse
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 T = TypeVar("T")
 

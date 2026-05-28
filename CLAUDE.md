@@ -9,6 +9,7 @@ This file provides essential guidance for working with the Spotify MCP server co
 - `uv sync` - Sync dependencies 
 - `uv run pytest` - Run all tests (must pass before commits)
 - `uv run mypy src/` - Type checking (must pass before commits)
+  - Optional speedup on mypy 2.x: `uv run mypy src/ --num-workers 4` (parallel checking)
 
 ### Environment Setup
 Required environment variables:
