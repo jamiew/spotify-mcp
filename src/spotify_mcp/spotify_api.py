@@ -1,16 +1,20 @@
+from __future__ import annotations
+
 import logging
 import os
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import spotipy
 from dotenv import load_dotenv
-from spotipy.cache_handler import CacheFileHandler
 from spotipy.oauth2 import SpotifyOAuth
 
 from . import utils
 from .utils import normalize_redirect_uri
+
+if TYPE_CHECKING:
+    from spotipy.cache_handler import CacheFileHandler
 
 
 def load_config() -> dict[str, str | None]:
@@ -127,17 +131,6 @@ class Client:
         results = self.sp.search(q=query, limit=limit, type=qtype)
         search_results = utils.parse_search_results(results, qtype)
         return search_results if search_results else {}
-
-    def recommendations(
-        self,
-        artists: list[str] | None = None,
-        tracks: list[str] | None = None,
-        limit: int = 20,
-    ) -> dict[str, Any]:
-        recs = self.sp.recommendations(
-            seed_artists=artists, seed_tracks=tracks, limit=limit
-        )
-        return recs if recs else {}
 
     def get_info(self, item_id: str, qtype: str = "track") -> dict[str, Any]:
         """
