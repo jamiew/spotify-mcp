@@ -75,6 +75,32 @@ SAMPLE_SEARCH_RESULTS = {
 }
 
 
+SAMPLE_ARTIST = {
+    "id": "0gxyHStUsqpMadRV0Di1Qt",
+    "name": "Rick Astley",
+    "genres": ["dance pop", "new wave pop"],
+    "popularity": 78,
+    "followers": {"total": 1234567},
+}
+
+SAMPLE_ALBUM = {
+    "id": "6XzKGcM6laRkTrME3rQvJw",
+    "name": "Whenever You Need Somebody",
+    "artists": [{"name": "Rick Astley", "id": "0gxyHStUsqpMadRV0Di1Qt"}],
+    "release_date": "1987-11-12",
+    "release_date_precision": "day",
+    "total_tracks": 10,
+    "album_type": "album",
+    "label": "RCA",
+    "genres": [],
+    "popularity": 70,
+    "external_urls": {
+        "spotify": "https://open.spotify.com/album/6XzKGcM6laRkTrME3rQvJw"
+    },
+    "tracks": {"items": [SAMPLE_TRACK]},
+}
+
+
 @pytest.fixture
 def mock_spotify_client():
     """Create a mocked Spotify client for testing."""
@@ -121,3 +147,15 @@ def sample_playback_data():
 def sample_search_results():
     """Provide sample search results for tests."""
     return SAMPLE_SEARCH_RESULTS
+
+
+@pytest.fixture
+def sample_artist_data():
+    """Provide sample artist data for tests."""
+    return SAMPLE_ARTIST
+
+
+@pytest.fixture
+def sample_album_data():
+    """Provide sample album data for tests."""
+    return SAMPLE_ALBUM

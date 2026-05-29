@@ -3,9 +3,11 @@ Modern FastMCP-based Spotify MCP Server.
 Clean, simple implementation using FastMCP's automatic features.
 """
 
+from __future__ import annotations
+
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
@@ -17,6 +19,15 @@ from spotify_mcp.logging_utils import (
     log_pagination_info,
     log_tool_execution,
 )
+
+if TYPE_CHECKING:
+    from spotify_mcp.spotify_types import (
+        AlbumObject,
+        AlbumRef,
+        ArtistObject,
+        PlaylistObject,
+        TrackObject,
+    )
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -103,20 +114,21 @@ class Album(BaseModel):
     external_urls: dict[str, str] | None = None
 
 
-def parse_track(item: dict[str, Any]) -> Track:
+def parse_track(item: TrackObject) -> Track:
     """Parse Spotify track data into Track model."""
     album_data = item.get("album", {})
+    artists = item.get("artists", [])
     return Track(
         name=item["name"],
         id=item["id"],
-        artist=item["artists"][0]["name"] if item.get("artists") else "Unknown",
-        artists=[a["name"] for a in item.get("artists", [])],
+        artist=artists[0]["name"] if artists else "Unknown",
+        artists=[a["name"] for a in artists],
         album=album_data.get("name"),
         album_id=album_data.get("id"),
         release_date=album_data.get("release_date"),
         duration_ms=item.get("duration_ms"),
         popularity=item.get("popularity"),
-        external_urls=item.get("external_urls"),
+        external_urls=cast("dict[str, str]", item.get("external_urls")),
     )
 
 
@@ -438,15 +450,16 @@ def get_artist_info(artist_id: str) -> dict[str, Any]:
     """
     try:
         logger.info(f"🎤 Getting artist info: {artist_id}")
-        result = spotify_client.artist(artist_id)
+        result: ArtistObject = spotify_client.artist(artist_id)
         top_tracks = spotify_client.artist_top_tracks(artist_id)
 
+        followers = result.get("followers") or {}
         artist = Artist(
             name=result["name"],
             id=result["id"],
             genres=result.get("genres", []),
             popularity=result.get("popularity"),
-            followers=result.get("followers", {}).get("total"),
+            followers=followers.get("total"),
         )
 
         tracks = [parse_track(track) for track in top_tracks.get("tracks", [])[:10]]
@@ -475,17 +488,19 @@ def get_playlist_info(playlist_id: str) -> dict[str, Any]:
     """
     try:
         logger.info(f"📋 Getting playlist info: {playlist_id}")
-        result = spotify_client.playlist(
+        result: PlaylistObject = spotify_client.playlist(
             playlist_id, fields="id,name,description,owner,public,tracks.total"
         )
 
+        owner = result.get("owner") or {}
+        tracks = result.get("tracks") or {}
         playlist = Playlist(
             name=result["name"],
             id=result["id"],
-            owner=result.get("owner", {}).get("display_name"),
+            owner=owner.get("display_name"),
             description=result.get("description"),
             tracks=None,  # No tracks - use get_playlist_tracks
-            total_tracks=result.get("tracks", {}).get("total"),
+            total_tracks=tracks.get("total"),
             public=result.get("public"),
         )
 
@@ -583,13 +598,16 @@ def get_user_playlists(limit: int = 20, offset: int = 0) -> dict[str, Any]:
 
         playlists = []
         for item in result.get("items", []):
+            item_typed = cast("PlaylistObject", item)
+            owner = item_typed.get("owner") or {}
+            tracks = item_typed.get("tracks") or {}
             playlist = Playlist(
-                name=item["name"],
-                id=item["id"],
-                owner=item.get("owner", {}).get("display_name"),
-                description=item.get("description"),
-                total_tracks=item.get("tracks", {}).get("total"),
-                public=item.get("public"),
+                name=item_typed["name"],
+                id=item_typed["id"],
+                owner=owner.get("display_name"),
+                description=item_typed.get("description"),
+                total_tracks=tracks.get("total"),
+                public=item_typed.get("public"),
             )
             playlists.append(playlist)
 
@@ -734,13 +752,14 @@ def get_album_info(album_id: str) -> dict[str, Any]:
     """
     try:
         logger.info(f"💿 Getting album info: {album_id}")
-        result = spotify_client.album(album_id)
+        result: AlbumObject = spotify_client.album(album_id)
 
+        result_artists = result.get("artists", [])
         album = Album(
             name=result["name"],
             id=result["id"],
-            artist=result["artists"][0]["name"] if result.get("artists") else "Unknown",
-            artists=[a["name"] for a in result.get("artists", [])],
+            artist=result_artists[0]["name"] if result_artists else "Unknown",
+            artists=[a["name"] for a in result_artists],
             release_date=result.get("release_date"),
             release_date_precision=result.get("release_date_precision"),
             total_tracks=result.get("total_tracks"),
@@ -748,19 +767,23 @@ def get_album_info(album_id: str) -> dict[str, Any]:
             label=result.get("label"),
             genres=result.get("genres", []),
             popularity=result.get("popularity"),
-            external_urls=result.get("external_urls"),
+            external_urls=cast("dict[str, str]", result.get("external_urls")),
         )
 
         # Parse album tracks
         tracks = []
-        for item in result.get("tracks", {}).get("items", []):
+        album_tracks = result.get("tracks") or {}
+        for item in album_tracks.get("items", []):
             if item:
                 # Album track items don't have album info, add it
-                item["album"] = {
-                    "name": result["name"],
-                    "id": result["id"],
-                    "release_date": result.get("release_date"),
-                }
+                item["album"] = cast(
+                    "AlbumRef",
+                    {
+                        "name": result["name"],
+                        "id": result["id"],
+                        "release_date": result.get("release_date"),
+                    },
+                )
                 tracks.append(parse_track(item).model_dump())
 
         return {

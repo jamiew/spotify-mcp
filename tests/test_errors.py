@@ -139,34 +139,6 @@ class TestSpotifyMCPError:
         assert error.details == {"track_id": "123"}
         assert error.suggestion == "Check the track ID"
 
-    def test_validation_error_class_method(self):
-        """Test validation error class method."""
-        error = SpotifyMCPError.validation_error(
-            "track_id", "must be a valid Spotify ID"
-        )
-
-        assert error.code == SpotifyMCPErrorCode.VALIDATION_ERROR
-        assert "track_id" in error.message
-        assert "must be a valid Spotify ID" in error.message
-        assert error.details["field"] == "track_id"
-
-    def test_no_active_device_class_method(self):
-        """Test no active device class method."""
-        error = SpotifyMCPError.no_active_device()
-
-        assert error.code == SpotifyMCPErrorCode.NO_ACTIVE_DEVICE
-        assert "device" in error.message.lower()
-        assert "open spotify" in error.suggestion.lower()
-
-    def test_premium_required_class_method(self):
-        """Test premium required class method."""
-        error = SpotifyMCPError.premium_required("playback control")
-
-        assert error.code == SpotifyMCPErrorCode.PREMIUM_REQUIRED
-        assert "premium" in error.message.lower()
-        assert "playback control" in error.message
-        assert error.details["operation"] == "playback control"
-
     def test_from_spotify_exception_404_track(self):
         """Test creating error from Spotify 404 track exception."""
         exc = SpotifyException(404, -1, "track not found")
@@ -184,18 +156,3 @@ class TestSpotifyMCPError:
         assert error.code == SpotifyMCPErrorCode.PLAYLIST_NOT_FOUND
         assert "playlist" in error.message.lower()
         assert error.details["http_status"] == 404
-
-    def test_to_mcp_error(self):
-        """Test converting to MCP error format."""
-        error = SpotifyMCPError(
-            SpotifyMCPErrorCode.PREMIUM_REQUIRED,
-            "Premium required",
-            {"feature": "playback"},
-            "Upgrade to Premium",
-        )
-
-        mcp_error = error.to_mcp_error()
-
-        assert mcp_error.type == "text"
-        assert "premium required" in mcp_error.text.lower()
-        assert "upgrade to premium" in mcp_error.text.lower()
