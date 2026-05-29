@@ -8,6 +8,13 @@ MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](
 - **Playback Control**: Start, pause, skip tracks, manage queue
 - **Search & Discovery**: Find tracks, albums, artists, playlists with pagination  
 - **Real-time State**: Live user profile and playback status
+- **Resources**: Read user, playback, track, playlist, artist, and album state by URI
+
+### Modern MCP Protocol
+- **Structured output**: every tool returns a typed schema, not a bare dict
+- **Tool annotations & icons**: read-only/destructive hints, titles, and a Spotify glyph
+- **Progress notifications**: live updates while paginating large playlists
+- **Elicitation**: destructive playlist removals ask for confirmation on clients that support it
 
 ### Enhanced Playlist Tools (New in this fork)
 - **Smart Batch Operations**: Add/remove up to 100 tracks in single API calls
@@ -52,7 +59,7 @@ Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_deskt
 
 ## Development
 
-Built with **FastMCP framework** featuring 13 focused tools, type-safe APIs, and comprehensive test coverage.
+Built with **FastMCP framework** featuring 11 focused tools, type-safe APIs, and comprehensive test coverage.
 
 **Debug with MCP Inspector:**
 ```bash

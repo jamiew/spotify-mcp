@@ -42,12 +42,16 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 FastMCP-based MCP server for Spotify Web API integration using Python/`uv`.
 
 ### Core Files
-- **`src/spotify_mcp/fastmcp_server.py`** - Main MCP server with 11 tools using `@mcp.tool()` decorators
-- **`src/spotify_mcp/spotify_api.py`** - Spotify API wrapper with OAuth authentication  
-- **`src/spotify_mcp/utils.py`** - Data parsing and validation utilities
+- **`src/spotify_mcp/fastmcp_server.py`** - Main MCP server: 11 tools, resources, and prompts using `@mcp.tool()`/`@mcp.resource()`/`@mcp.prompt()` decorators, with typed Pydantic output models
+- **`src/spotify_mcp/spotify_api.py`** - OAuth client wrapper (auth/token management only); tools talk to `self.sp` directly
+- **`src/spotify_mcp/spotify_types.py`** - TypedDicts for the Spotify response shapes the server consumes
+- **`src/spotify_mcp/utils.py`** - Redirect-URI normalization
 
 ### Key Features
 - **11 MCP Tools**: Playback control, search, queue management, playlist operations, track/artist info
+- **Structured Output**: Every tool returns a typed Pydantic model (real output schema)
+- **Tool Annotations & Icons**: read-only/destructive hints, titles, and a Spotify glyph on tools/resources/prompts
+- **Progress & Elicitation**: progress notifications for large paginations; confirmation prompts before destructive playlist removals (when the client supports it)
 - **Pagination Support**: Handles large datasets (10k+ tracks) with `limit`/`offset` parameters
 - **OAuth Flow**: Automatic token management via spotipy
 - **Type Safety**: Full Pydantic validation and MyPy compliance
@@ -57,7 +61,7 @@ FastMCP-based MCP server for Spotify Web API integration using Python/`uv`.
 
 ### Tool Design Principles
 - **Single Responsibility**: One focused purpose per tool (avoid `action` parameters)
-- **Consistent Returns**: Always return structured `Dict[str, Any]` 
+- **Structured Returns**: Return a typed Pydantic model so the tool has a real output schema
 - **Pagination-First**: Add `limit`/`offset` to tools that can return >20 items
 - **Type Safety**: Use strict type hints and Pydantic validation
 

@@ -2,6 +2,25 @@
 
 ## 2026-05-28
 
+### Modern MCP protocol features
+- structured output: every tool returns a typed Pydantic model (real output
+  schemas) instead of bare dicts
+- tool annotations (readOnly/destructive/idempotent/openWorld hints) + titles,
+  plus a Spotify icon on every tool, resource, and prompt
+- progress + log notifications while paginating large playlists
+- elicitation: `remove_tracks_from_playlist` confirms before deleting on clients
+  that support it, and proceeds without prompting on clients that don't
+- new resources: track / playlist / artist / album by id
+
+### Fixes
+- playback now reads from `current_playback()`, so device/volume/shuffle/repeat
+  are populated instead of always null
+- a destructive removal no longer slips through when an elicitation prompt errors
+  on a capable client — only genuinely unsupported clients skip confirmation
+- playlist add/remove now surface the returned `snapshot_id`
+- search tolerates null entries in result items
+- dropped unused error codes left over from the deleted error helpers
+
 ### Dependencies updated to current majors
 - bumped the runtime + dev stack to latest: mcp 1.27, spotipy 2.26, pytest 9,
   mypy 2.0, ruff 0.15, pytest-cov 7 (pydantic 2.13 pulled in transitively)
