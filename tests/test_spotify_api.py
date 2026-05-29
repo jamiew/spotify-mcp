@@ -5,9 +5,15 @@ from unittest.mock import patch
 
 import pytest
 import spotipy
+from spotipy.cache_handler import CacheFileHandler, MemoryCacheHandler
 from spotipy.exceptions import SpotifyOauthError
 
-from spotify_mcp.spotify_api import Client, load_config
+from spotify_mcp.spotify_api import (
+    Client,
+    build_cache_handler,
+    is_headless,
+    load_config,
+)
 
 
 class TestLoadConfig:
@@ -95,3 +101,66 @@ class TestSpotifyClient:
     def test_raises_on_missing_credentials(self):
         with pytest.raises(SpotifyOauthError):
             Client()
+
+
+class TestHeadlessAuth:
+    """Headless/remote OAuth: no browser, token seeded out-of-band."""
+
+    def test_is_headless_false_for_local_stdio(self, monkeypatch):
+        monkeypatch.delenv("SPOTIFY_REFRESH_TOKEN", raising=False)
+        monkeypatch.delenv("SPOTIFY_MCP_TRANSPORT", raising=False)
+        assert is_headless() is False
+
+    def test_is_headless_true_with_refresh_token(self, monkeypatch):
+        monkeypatch.setenv("SPOTIFY_REFRESH_TOKEN", "rt")
+        assert is_headless() is True
+
+    def test_is_headless_true_with_http_transport(self, monkeypatch):
+        monkeypatch.delenv("SPOTIFY_REFRESH_TOKEN", raising=False)
+        monkeypatch.setenv("SPOTIFY_MCP_TRANSPORT", "streamable-http")
+        assert is_headless() is True
+
+    def test_refresh_token_seeds_memory_handler(self, monkeypatch):
+        monkeypatch.setenv("SPOTIFY_REFRESH_TOKEN", "my-refresh")
+        monkeypatch.delenv("SPOTIFY_CACHE_PATH", raising=False)
+
+        handler = build_cache_handler("scope-a,scope-b")
+
+        assert isinstance(handler, MemoryCacheHandler)
+        cached = handler.get_cached_token()
+        assert cached["refresh_token"] == "my-refresh"
+        assert cached["scope"] == "scope-a,scope-b"
+        assert cached["expires_at"] == 0
+
+    def test_cache_path_uses_file_handler(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("SPOTIFY_REFRESH_TOKEN", raising=False)
+        monkeypatch.setenv("SPOTIFY_CACHE_PATH", str(tmp_path / ".cache"))
+
+        handler = build_cache_handler("scope")
+
+        assert isinstance(handler, CacheFileHandler)
+
+    def test_no_env_falls_back_to_default(self, monkeypatch):
+        monkeypatch.delenv("SPOTIFY_REFRESH_TOKEN", raising=False)
+        monkeypatch.delenv("SPOTIFY_CACHE_PATH", raising=False)
+
+        assert build_cache_handler("scope") is None
+
+    def test_client_disables_browser_when_headless(self, monkeypatch):
+        monkeypatch.setenv("SPOTIFY_REFRESH_TOKEN", "rt")
+
+        with patch("spotify_mcp.spotify_api.SpotifyOAuth") as mock_oauth:
+            Client()
+
+        kwargs = mock_oauth.call_args.kwargs
+        assert kwargs["open_browser"] is False
+        assert isinstance(kwargs["cache_handler"], MemoryCacheHandler)
+
+    def test_client_enables_browser_for_local(self, monkeypatch):
+        monkeypatch.delenv("SPOTIFY_REFRESH_TOKEN", raising=False)
+        monkeypatch.delenv("SPOTIFY_MCP_TRANSPORT", raising=False)
+
+        with patch("spotify_mcp.spotify_api.SpotifyOAuth") as mock_oauth:
+            Client()
+
+        assert mock_oauth.call_args.kwargs["open_browser"] is True

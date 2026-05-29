@@ -5,6 +5,7 @@ Clean, simple implementation using FastMCP's automatic features.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 from typing import TYPE_CHECKING, cast
@@ -27,6 +28,8 @@ from spotify_mcp.logging_utils import (
 )
 
 if TYPE_CHECKING:
+    from starlette.types import ASGIApp, Receive, Scope, Send
+
     from spotify_mcp.spotify_types import (
         AlbumObject,
         AlbumRef,
@@ -1360,6 +1363,47 @@ Pagination Best Practices:
 - Stop when you find enough quality matches
 
 Output: Curated list of 15-25 discovered tracks with variety"""
+
+
+# === HTTP TRANSPORT ===
+
+
+def _bearer_guard(app: ASGIApp, token: str) -> ASGIApp:
+    """Wrap an ASGI app so HTTP requests must carry `Authorization: Bearer <token>`.
+
+    Non-http scopes (e.g. lifespan) pass straight through so the streamable-HTTP
+    session manager still starts. Uses a constant-time compare.
+    """
+    expected = b"Bearer " + token.encode()
+
+    async def guarded(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers") or [])
+            provided = headers.get(b"authorization", b"")
+            if not hmac.compare_digest(provided, expected):
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"Unauthorized"})
+                return
+        await app(scope, receive, send)
+
+    return guarded
+
+
+def build_http_app(bearer_token: str | None = None) -> ASGIApp:
+    """Build the streamable-HTTP ASGI app, optionally gated by a bearer token.
+
+    Used by the CLI http path and by remote deploy entrypoints (e.g. Modal).
+    """
+    app: ASGIApp = mcp.streamable_http_app()
+    if bearer_token:
+        app = _bearer_guard(app, bearer_token)
+    return app
 
 
 if __name__ == "__main__":

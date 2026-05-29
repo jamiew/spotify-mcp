@@ -62,15 +62,26 @@ class TestConsistencyWithPyproject:
 
 
 class TestEnvVarsMatchCode:
-    def test_server_json_declares_exactly_the_vars_the_code_reads(
+    REQUIRED_CORE = {
+        "SPOTIFY_CLIENT_ID",
+        "SPOTIFY_CLIENT_SECRET",
+        "SPOTIFY_REDIRECT_URI",
+    }
+
+    def test_server_json_only_declares_vars_the_code_reads(
         self, server_json: dict
     ) -> None:
+        # The stdio manifest may omit optional remote-deploy vars (refresh token,
+        # cache path, transport knobs), but it must never declare a var the code
+        # doesn't read, and must declare the required core vars.
         declared = {
             ev["name"] for ev in server_json["packages"][0]["environmentVariables"]
         }
-        source = (ROOT / "src" / "spotify_mcp" / "spotify_api.py").read_text()
+        src_dir = ROOT / "src" / "spotify_mcp"
+        source = "\n".join(p.read_text() for p in sorted(src_dir.glob("*.py")))
         used = set(re.findall(r'os\.getenv\(\s*"(SPOTIFY_[A-Z_]+)"', source))
-        assert declared == used
+        assert declared <= used
+        assert self.REQUIRED_CORE <= declared
 
     def test_required_secrets_are_flagged(self, server_json: dict) -> None:
         by_name = {

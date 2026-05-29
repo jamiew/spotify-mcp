@@ -4,16 +4,17 @@ import logging
 import os
 import tomllib
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import spotipy
 from dotenv import load_dotenv
+from spotipy.cache_handler import (
+    CacheFileHandler,
+    CacheHandler,
+    MemoryCacheHandler,
+)
 from spotipy.oauth2 import SpotifyOAuth
 
 from .utils import normalize_redirect_uri
-
-if TYPE_CHECKING:
-    from spotipy.cache_handler import CacheFileHandler
 
 
 def load_config() -> dict[str, str | None]:
@@ -85,6 +86,47 @@ SCOPES = [
 ]
 
 
+def is_headless() -> bool:
+    """True when there's no interactive browser to complete the OAuth flow.
+
+    Remote/hosted deploys (http transport, or a pre-supplied refresh token) must
+    never try to pop a browser; local stdio installs still get the convenient
+    auto-open flow on first auth.
+    """
+    if os.getenv("SPOTIFY_REFRESH_TOKEN"):
+        return True
+    transport = os.getenv("SPOTIFY_MCP_TRANSPORT", "stdio").strip().lower()
+    return transport in ("streamable-http", "http")
+
+
+def build_cache_handler(scope: str) -> CacheHandler | None:
+    """Pick a token-cache strategy for the current environment.
+
+    Headless deploys can't run the interactive browser OAuth flow and often have
+    an ephemeral filesystem, so we seed the token from a pre-obtained refresh
+    token (`SPOTIFY_REFRESH_TOKEN`) or point at a writable cache file on a
+    persistent volume (`SPOTIFY_CACHE_PATH`). Returns None to fall back to
+    spotipy's default local file cache.
+    """
+    refresh_token = os.getenv("SPOTIFY_REFRESH_TOKEN")
+    if refresh_token:
+        # expires_at=0 forces spotipy to refresh the access token on first use
+        token_info = {
+            "access_token": "",
+            "token_type": "Bearer",
+            "refresh_token": refresh_token,
+            "scope": scope,
+            "expires_at": 0,
+        }
+        return MemoryCacheHandler(token_info=token_info)
+
+    cache_path = os.getenv("SPOTIFY_CACHE_PATH")
+    if cache_path:
+        return CacheFileHandler(cache_path=cache_path)
+
+    return None
+
+
 class Client:
     """Owns Spotify OAuth setup and exposes the authenticated spotipy client.
 
@@ -94,7 +136,7 @@ class Client:
 
     sp: spotipy.Spotify
     auth_manager: SpotifyOAuth
-    cache_handler: CacheFileHandler
+    cache_handler: CacheHandler
     logger: logging.Logger
 
     def __init__(self, logger: logging.Logger | None = None):
@@ -111,6 +153,8 @@ class Client:
                 client_id=CLIENT_ID,
                 client_secret=CLIENT_SECRET,
                 redirect_uri=REDIRECT_URI,
+                open_browser=not is_headless(),
+                cache_handler=build_cache_handler(scope),
             )
 
             self.sp = spotipy.Spotify(auth_manager=auth_manager)

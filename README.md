@@ -166,6 +166,21 @@ To run the latest unpublished commit without cloning: `uvx --from git+https://gi
 
 On first use the server opens a browser for Spotify OAuth; the token is cached locally for later runs.
 
+## Remote hosting (streamable-HTTP)
+
+The server speaks stdio by default, but can serve **streamable-HTTP** for remote/hosted
+use. Set `SPOTIFY_MCP_TRANSPORT=streamable-http` (optionally `SPOTIFY_MCP_HOST`,
+`SPOTIFY_MCP_PORT`); clients connect with `claude mcp add --transport http spotify <url>/mcp`.
+
+Because a hosted process has no browser and often an ephemeral disk, supply the OAuth token
+out-of-band: complete the browser flow once locally, then set `SPOTIFY_REFRESH_TOKEN` (or
+point `SPOTIFY_CACHE_PATH` at a persistent volume). Optional `SPOTIFY_MCP_BEARER` gates the
+endpoint behind an `Authorization: Bearer …` header — otherwise keep it on a private network
+(Tailscale / Cloudflare Tunnel).
+
+For a one-command Modal deploy and the homelab/Fly/Render trade-offs, see `PLAN.md` and
+`deploy/modal_app.py`. Note Modal requires stateless mode (`SPOTIFY_MCP_STATELESS=true`).
+
 ## Usage Examples
 
 - **"Create a chill study playlist with 20 tracks"** → Search + playlist creation + bulk track addition
