@@ -53,9 +53,7 @@ class TestBearerGuard:
         inner = _FakeApp()
         guarded = _bearer_guard(inner, "secret")
 
-        sent = await _drive(
-            guarded, _http_scope([(b"authorization", b"Bearer nope")])
-        )
+        sent = await _drive(guarded, _http_scope([(b"authorization", b"Bearer nope")]))
 
         assert sent[0]["status"] == 401
         assert inner.seen == []
