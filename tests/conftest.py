@@ -127,11 +127,16 @@ def mock_spotify_api(mock_spotify_client):
 
 @pytest.fixture
 def mock_context():
-    """A mock MCP Context with async progress/log/elicit methods."""
+    """A mock MCP Context with async progress/log/elicit methods.
+
+    Defaults to a client that supports elicitation; tests that exercise the
+    unsupported path flip check_client_capability to return False.
+    """
     ctx = MagicMock()
     ctx.report_progress = AsyncMock()
     ctx.info = AsyncMock()
     ctx.elicit = AsyncMock()
+    ctx.session.check_client_capability = MagicMock(return_value=True)
     return ctx
 
 

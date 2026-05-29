@@ -10,7 +10,12 @@ import logging
 from typing import TYPE_CHECKING, cast
 
 from mcp.server.fastmcp import Context, FastMCP
-from mcp.types import Icon, ToolAnnotations
+from mcp.types import (
+    ClientCapabilities,
+    ElicitationCapability,
+    Icon,
+    ToolAnnotations,
+)
 from pydantic import BaseModel
 from spotipy import SpotifyException
 
@@ -330,7 +335,7 @@ def playback_control(
     try:
         if action == "get":
             logger.info("🎵 Getting current playback state")
-            result = spotify_client.current_user_playing_track()
+            result = spotify_client.current_playback()
         elif action == "start":
             if track_id:
                 logger.info(f"🎵 Starting playback of track: {track_id}")
@@ -338,16 +343,16 @@ def playback_control(
             else:
                 logger.info("🎵 Resuming playback")
                 spotify_client.start_playback()
-            result = spotify_client.current_user_playing_track()
+            result = spotify_client.current_playback()
         elif action == "pause":
             logger.info("🎵 Pausing playback")
             spotify_client.pause_playback()
-            result = spotify_client.current_user_playing_track()
+            result = spotify_client.current_playback()
         elif action == "skip":
             logger.info(f"🎵 Skipping {num_skips} track(s)")
             for _ in range(num_skips):
                 spotify_client.next_track()
-            result = spotify_client.current_user_playing_track()
+            result = spotify_client.current_playback()
         else:
             raise ValueError(f"Invalid action: {action}")
 
@@ -407,7 +412,7 @@ def search_tracks(
         album: Filter by album name
 
     Returns:
-        Dict with 'items' (list of tracks) and pagination info ('total', 'limit', 'offset')
+        SearchResults with 'items' (list of tracks) and pagination info ('total', 'limit', 'offset')
 
     Note: Filters use Spotify's search syntax. For large result sets, use offset to paginate.
     Example: query='love', year='2024', genre='pop' searches for 'love year:2024 genre:pop'
@@ -440,12 +445,15 @@ def search_tracks(
         tracks = []
         items_key = f"{qtype}s"
         result_section = result.get(items_key, {})
+        # Spotify can return null entries in items (e.g. removed content), so guard each.
         if qtype == "track" and result_section.get("items"):
-            tracks = [parse_track(item) for item in result_section["items"]]
+            tracks = [parse_track(item) for item in result_section["items"] if item]
         else:
             # Convert other types to track-like format for consistency
             if result_section.get("items"):
                 for item in result_section["items"]:
+                    if not item:
+                        continue
                     track = Track(
                         name=item["name"],
                         id=item["id"],
@@ -547,7 +555,7 @@ def get_track_info(track_ids: str | list[str]) -> TrackList:
         track_ids: Single track ID or list of track IDs (up to 50)
 
     Returns:
-        Dict with 'tracks' list containing track metadata including release_date.
+        TrackList with 'tracks' containing track metadata including release_date.
         For single ID, returns {'tracks': [track]}.
 
     Note: Batch lookup is much more efficient - 50 tracks = 1 API call instead of 50.
@@ -587,7 +595,7 @@ def get_artist_info(artist_id: str) -> ArtistInfo:
     Args:
         artist_id: Spotify artist ID
     Returns:
-        Dict with artist info and top tracks
+        ArtistInfo with the artist and their top tracks
     """
     try:
         logger.info(f"🎤 Getting artist info: {artist_id}")
@@ -625,7 +633,7 @@ def get_playlist_info(playlist_id: str) -> Playlist:
         playlist_id: Spotify playlist ID
 
     Returns:
-        Dict with playlist metadata (no tracks - use get_playlist_tracks for tracks)
+        Playlist metadata (no tracks - use get_playlist_tracks for tracks)
 
     Note: This returns playlist info only. For tracks, use get_playlist_tracks
     which supports full pagination for large playlists.
@@ -673,7 +681,7 @@ def create_playlist(name: str, description: str = "", public: bool = True) -> Pl
         public: Whether playlist is public (default: True)
 
     Returns:
-        Dict with created playlist information
+        The created Playlist
     """
     try:
         logger.info(f"🎧 Creating playlist: '{name}' (public={public})")
@@ -724,9 +732,11 @@ def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> ActionRes
         ]
 
         logger.info(f"🎧 Adding {len(uris)} tracks to playlist {playlist_id}")
-        spotify_client.playlist_add_items(playlist_id, uris)
+        result = spotify_client.playlist_add_items(playlist_id, uris)
         return ActionResult(
-            status="success", message=f"Added {len(uris)} tracks to playlist"
+            status="success",
+            message=f"Added {len(uris)} tracks to playlist",
+            snapshot_id=result.get("snapshot_id") if result else None,
         )
 
     except SpotifyException as e:
@@ -749,7 +759,7 @@ def get_user_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
         offset: Number of playlists to skip for pagination (default 0)
 
     Returns:
-        Dict with 'items' (list of playlists) and pagination info ('total', 'limit', 'offset')
+        PlaylistList with 'items' (list of playlists) and pagination info ('total', 'limit', 'offset')
 
     Note: For users with many playlists, use offset to paginate through results.
     Example: offset=0 gets playlists 1-20, offset=20 gets playlists 21-40, etc.
@@ -814,7 +824,7 @@ async def get_playlist_tracks(
         offset: Number of tracks to skip for pagination (default 0)
 
     Returns:
-        Dict with 'items' (list of tracks), 'total', 'limit', 'offset'
+        PlaylistTracks with 'items' (list of tracks), 'total', 'limit', 'offset'
 
     Note: Large playlists require pagination. Use limit/offset to get specific ranges:
     - Get first 100: limit=100, offset=0
@@ -828,7 +838,7 @@ async def get_playlist_tracks(
 
         # Fetch total up front so progress notifications have a denominator
         playlist_info = spotify_client.playlist(playlist_id, fields="tracks.total")
-        total_tracks = playlist_info.get("tracks", {}).get("total")
+        total_tracks = (playlist_info.get("tracks") or {}).get("total")
 
         tracks = await get_playlist_tracks_paginated(
             playlist_id, limit, offset, ctx=ctx, total=total_tracks
@@ -879,32 +889,38 @@ async def remove_tracks_from_playlist(
             for uri in track_uris
         ]
 
-        # Confirm this destructive op when the client supports elicitation.
-        # Fall through and proceed if it doesn't, so a core op never hard-fails.
-        if ctx is not None:
-            try:
-                response = await ctx.elicit(
-                    message=(
-                        f"Remove {len(uris)} track(s) from playlist {playlist_id}? "
-                        "This cannot be undone."
-                    ),
-                    schema=RemovalConfirmation,
+        # Confirm this destructive op, but only when the client actually
+        # advertises elicitation support. If it doesn't, proceed so this core
+        # op never hard-fails on capability-poor clients. If it does support
+        # elicitation and the prompt errors, we let that propagate rather than
+        # silently deleting — an unconfirmed destructive edit must not slip through.
+        if ctx is not None and ctx.session.check_client_capability(
+            ClientCapabilities(elicitation=ElicitationCapability())
+        ):
+            response = await ctx.elicit(
+                message=(
+                    f"Remove {len(uris)} track(s) from playlist {playlist_id}? "
+                    "This cannot be undone."
+                ),
+                schema=RemovalConfirmation,
+            )
+            confirmed = response.action == "accept" and bool(
+                response.data and response.data.confirm
+            )
+            if not confirmed:
+                return ActionResult(
+                    status="cancelled",
+                    message="Removal cancelled by user",
                 )
-                confirmed = response.action == "accept" and bool(
-                    response.data and response.data.confirm
-                )
-                if not confirmed:
-                    return ActionResult(
-                        status="cancelled",
-                        message="Removal cancelled by user",
-                    )
-            except Exception:
-                logger.info("Elicitation unsupported; proceeding without confirmation")
 
         logger.info(f"🚮 Removing {len(uris)} tracks from playlist {playlist_id}")
-        spotify_client.playlist_remove_all_occurrences_of_items(playlist_id, uris)
+        result = spotify_client.playlist_remove_all_occurrences_of_items(
+            playlist_id, uris
+        )
         return ActionResult(
-            status="success", message=f"Removed {len(uris)} tracks from playlist"
+            status="success",
+            message=f"Removed {len(uris)} tracks from playlist",
+            snapshot_id=result.get("snapshot_id") if result else None,
         )
 
     except SpotifyException as e:
@@ -977,7 +993,7 @@ def get_album_info(album_id: str) -> AlbumInfo:
         album_id: Spotify album ID
 
     Returns:
-        Dict with album metadata including release_date, label, tracks
+        AlbumInfo with album metadata (release_date, label) and its tracks
     """
     try:
         logger.info(f"💿 Getting album info: {album_id}")
@@ -1036,7 +1052,7 @@ def get_saved_tracks(limit: int = 20, offset: int = 0) -> SavedTracks:
         offset: Number of tracks to skip for pagination (default 0)
 
     Returns:
-        Dict with 'items' (list of tracks with added_at timestamp) and pagination info
+        SavedTracks with 'items' (tracks with added_at timestamp) and pagination info
     """
     try:
         limit = max(1, min(50, limit))
@@ -1090,7 +1106,7 @@ def current_user() -> str:
 def current_playback_resource() -> str:
     """Current playback state."""
     try:
-        playback = spotify_client.current_user_playing_track()
+        playback = spotify_client.current_playback()
         if not playback:
             return json.dumps({"status": "no_playback"})
 

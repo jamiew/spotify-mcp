@@ -19,7 +19,6 @@ class SpotifyMCPErrorCode(Enum):
     # API errors
     API_RATE_LIMITED = "api_rate_limited"
     API_UNAVAILABLE = "api_unavailable"
-    INVALID_REQUEST = "invalid_request"
 
     # Device errors
     NO_ACTIVE_DEVICE = "no_active_device"
@@ -33,12 +32,9 @@ class SpotifyMCPErrorCode(Enum):
 
     # Playback errors
     PLAYBACK_RESTRICTED = "playback_restricted"
-    ALREADY_PLAYING = "already_playing"
-    ALREADY_PAUSED = "already_paused"
 
     # General errors
     UNKNOWN_ERROR = "unknown_error"
-    VALIDATION_ERROR = "validation_error"
 
 
 class SpotifyMCPError(Exception):

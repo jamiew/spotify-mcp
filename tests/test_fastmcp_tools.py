@@ -46,7 +46,7 @@ SPOTIFY_ERROR = SpotifyException(404, -1, "track not found")
 
 class TestPlaybackControl:
     def test_get_playback_state(self, mock_spotify_api, sample_playback_data):
-        mock_spotify_api.current_user_playing_track.return_value = sample_playback_data
+        mock_spotify_api.current_playback.return_value = sample_playback_data
 
         result = playback_control("get")
 
@@ -56,10 +56,10 @@ class TestPlaybackControl:
         assert result.track.name == "Never Gonna Give You Up"
         assert result.device == "My iPhone"
         assert result.volume == 70
-        mock_spotify_api.current_user_playing_track.assert_called_once()
+        mock_spotify_api.current_playback.assert_called_once()
 
     def test_start_playback_with_track(self, mock_spotify_api, sample_playback_data):
-        mock_spotify_api.current_user_playing_track.return_value = sample_playback_data
+        mock_spotify_api.current_playback.return_value = sample_playback_data
 
         playback_control("start", track_id="4iV5W9uYEdYUVa79Axb7Rh")
 
@@ -68,21 +68,21 @@ class TestPlaybackControl:
         )
 
     def test_start_playback_resume(self, mock_spotify_api, sample_playback_data):
-        mock_spotify_api.current_user_playing_track.return_value = sample_playback_data
+        mock_spotify_api.current_playback.return_value = sample_playback_data
 
         playback_control("start")
 
         mock_spotify_api.start_playback.assert_called_once_with()
 
     def test_pause_playback(self, mock_spotify_api, sample_playback_data):
-        mock_spotify_api.current_user_playing_track.return_value = sample_playback_data
+        mock_spotify_api.current_playback.return_value = sample_playback_data
 
         playback_control("pause")
 
         mock_spotify_api.pause_playback.assert_called_once()
 
     def test_skip_multiple_tracks(self, mock_spotify_api, sample_playback_data):
-        mock_spotify_api.current_user_playing_track.return_value = sample_playback_data
+        mock_spotify_api.current_playback.return_value = sample_playback_data
 
         playback_control("skip", num_skips=3)
 
@@ -93,7 +93,7 @@ class TestPlaybackControl:
             playback_control("invalid_action")
 
     def test_get_with_no_active_playback(self, mock_spotify_api):
-        mock_spotify_api.current_user_playing_track.return_value = None
+        mock_spotify_api.current_playback.return_value = None
 
         result = playback_control("get")
 
@@ -102,7 +102,7 @@ class TestPlaybackControl:
         assert result.track is None
 
     def test_spotify_error_becomes_value_error(self, mock_spotify_api):
-        mock_spotify_api.current_user_playing_track.side_effect = SPOTIFY_ERROR
+        mock_spotify_api.current_playback.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
             playback_control("get")
@@ -369,6 +369,7 @@ class TestAddTracksToPlaylist:
         result = add_tracks_to_playlist("pl1", ["rawid", "spotify:track:already"])
 
         assert "Added 2 tracks" in result.message
+        assert result.snapshot_id == "s1"
         mock_spotify_api.playlist_add_items.assert_called_once_with(
             "pl1", ["spotify:track:rawid", "spotify:track:already"]
         )
@@ -389,9 +390,14 @@ class TestAddTracksToPlaylist:
 
 class TestRemoveTracksFromPlaylist:
     async def test_converts_ids_and_uris(self, mock_spotify_api):
+        mock_spotify_api.playlist_remove_all_occurrences_of_items.return_value = {
+            "snapshot_id": "s2"
+        }
+
         result = await remove_tracks_from_playlist("pl1", ["rawid"])
 
         assert result.status == "success"
+        assert result.snapshot_id == "s2"
         mock_spotify_api.playlist_remove_all_occurrences_of_items.assert_called_once_with(
             "pl1", ["spotify:track:rawid"]
         )
@@ -405,6 +411,9 @@ class TestRemoveTracksFromPlaylist:
             await remove_tracks_from_playlist("pl1", ["rawid"])
 
     async def test_elicit_accept_proceeds(self, mock_spotify_api, mock_context):
+        mock_spotify_api.playlist_remove_all_occurrences_of_items.return_value = {
+            "snapshot_id": "s2"
+        }
         mock_context.elicit.return_value = SimpleNamespace(
             action="accept", data=SimpleNamespace(confirm=True)
         )
@@ -424,12 +433,26 @@ class TestRemoveTracksFromPlaylist:
         mock_spotify_api.playlist_remove_all_occurrences_of_items.assert_not_called()
 
     async def test_elicit_unsupported_proceeds(self, mock_spotify_api, mock_context):
-        mock_context.elicit.side_effect = RuntimeError("elicitation not supported")
+        # Client doesn't advertise elicitation: skip the prompt and proceed.
+        mock_context.session.check_client_capability.return_value = False
+        mock_spotify_api.playlist_remove_all_occurrences_of_items.return_value = {
+            "snapshot_id": "s2"
+        }
 
         result = await remove_tracks_from_playlist("pl1", ["rawid"], ctx=mock_context)
 
         assert result.status == "success"
+        mock_context.elicit.assert_not_awaited()
         mock_spotify_api.playlist_remove_all_occurrences_of_items.assert_called_once()
+
+    async def test_elicit_error_does_not_delete(self, mock_spotify_api, mock_context):
+        # Client supports elicitation but the prompt fails: must NOT delete.
+        mock_context.elicit.side_effect = RuntimeError("transport failure")
+
+        with pytest.raises(RuntimeError):
+            await remove_tracks_from_playlist("pl1", ["rawid"], ctx=mock_context)
+
+        mock_spotify_api.playlist_remove_all_occurrences_of_items.assert_not_called()
 
     async def test_elicit_accept_without_confirm_cancels(
         self, mock_spotify_api, mock_context
@@ -675,7 +698,7 @@ class TestResources:
         assert "error" in result
 
     def test_current_playback_resource(self, mock_spotify_api, sample_playback_data):
-        mock_spotify_api.current_user_playing_track.return_value = sample_playback_data
+        mock_spotify_api.current_playback.return_value = sample_playback_data
 
         result = json.loads(current_playback_resource())
 
@@ -683,7 +706,7 @@ class TestResources:
         assert result["track"]["name"] == "Never Gonna Give You Up"
 
     def test_current_playback_resource_no_playback(self, mock_spotify_api):
-        mock_spotify_api.current_user_playing_track.return_value = None
+        mock_spotify_api.current_playback.return_value = None
 
         result = json.loads(current_playback_resource())
 
@@ -719,7 +742,7 @@ class TestResources:
         assert result["name"] == "Whenever You Need Somebody"
 
     def test_current_playback_resource_error(self, mock_spotify_api):
-        mock_spotify_api.current_user_playing_track.side_effect = Exception("boom")
+        mock_spotify_api.current_playback.side_effect = Exception("boom")
 
         result = json.loads(current_playback_resource())
 
