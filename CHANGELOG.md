@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-05-29
+
+### Packaging & distribution
+- published to PyPI as `spotify-mcp-jamiew` and to the MCP Registry as
+  `io.github.jamiew/spotify-mcp` (`spotify-mcp` is taken by upstream)
+- one-command install via `uvx spotify-mcp-jamiew`; README now has copy-paste
+  setup for Claude Code, Claude Desktop, and Codex CLI
+- automated release: a GitHub Actions workflow publishes to PyPI + the MCP
+  Registry on GitHub release via OIDC trusted publishing (no stored tokens)
+- added packaging tests that keep `server.json` in sync with `pyproject.toml`
+  and the env vars the server reads
+
 ## 2026-05-28
 
 ### Modern MCP protocol features

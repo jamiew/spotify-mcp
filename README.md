@@ -139,7 +139,7 @@ On first use the server opens a browser for Spotify OAuth; the token is cached l
 
 ## Development
 
-Built with **FastMCP framework** featuring 11 focused tools, type-safe APIs, and comprehensive test coverage.
+Built with the **FastMCP framework** — focused single-purpose tools spanning playback, search, queue, and playlist management, with type-safe APIs and comprehensive test coverage.
 
 **Debug with MCP Inspector:**
 ```bash

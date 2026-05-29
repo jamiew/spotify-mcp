@@ -58,13 +58,13 @@ One-time setup (already required before the first successful run):
 FastMCP-based MCP server for Spotify Web API integration using Python/`uv`.
 
 ### Core Files
-- **`src/spotify_mcp/fastmcp_server.py`** - Main MCP server: 11 tools, resources, and prompts using `@mcp.tool()`/`@mcp.resource()`/`@mcp.prompt()` decorators, with typed Pydantic output models
+- **`src/spotify_mcp/fastmcp_server.py`** - Main MCP server: tools, resources, and prompts using `@mcp.tool()`/`@mcp.resource()`/`@mcp.prompt()` decorators, with typed Pydantic output models
 - **`src/spotify_mcp/spotify_api.py`** - OAuth client wrapper (auth/token management only); tools talk to `self.sp` directly
 - **`src/spotify_mcp/spotify_types.py`** - TypedDicts for the Spotify response shapes the server consumes
 - **`src/spotify_mcp/utils.py`** - Redirect-URI normalization
 
 ### Key Features
-- **11 MCP Tools**: Playback control, search, queue management, playlist operations, track/artist info
+- **MCP Tools**: Playback control, search, queue management, playlist operations, track/artist info
 - **Structured Output**: Every tool returns a typed Pydantic model (real output schema)
 - **Tool Annotations & Icons**: read-only/destructive hints, titles, and a Spotify glyph on tools/resources/prompts
 - **Progress & Elicitation**: progress notifications for large paginations; confirmation prompts before destructive playlist removals (when the client supports it)

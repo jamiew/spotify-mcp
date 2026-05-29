@@ -344,7 +344,7 @@
         </section>
 
         <section id="tools">
-            <h2>13 Powerful Tools</h2>
+            <h2>Powerful Tools</h2>
             <div class="tools-grid">
                 <div class="tool-card">
                     <h4>playback_control</h4>
@@ -416,13 +416,20 @@
         <section id="installation">
             <h2>Installation</h2>
 
+            <p style="text-align: center; color: var(--spotify-light-gray); margin-bottom: 16px;">
+                Published on PyPI &mdash; install in one command with <code>uvx</code>. No clone, no local path.
+            </p>
+
             <div class="code-block">
-                <pre>git clone https://github.com/jamiew/spotify-mcp.git
-cd spotify-mcp
-uv sync</pre>
+                <pre>claude mcp add spotify \
+  -e SPOTIFY_CLIENT_ID=your_client_id \
+  -e SPOTIFY_CLIENT_SECRET=your_client_secret \
+  -e SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888 \
+  -- uvx spotify-mcp-jamiew</pre>
             </div>
 
             <p style="text-align: center; color: var(--spotify-light-gray); margin-top: 20px;">
+                Works the same in Claude Desktop and Codex &mdash; just run <code>uvx spotify-mcp-jamiew</code>.<br>
                 Requires: Spotify Premium account, <code>uv</code> >= 0.54
             </p>
 
