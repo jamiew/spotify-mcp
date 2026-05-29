@@ -15,19 +15,29 @@ class ExternalUrls(TypedDict, total=False):
     spotify: str
 
 
-class ArtistRef(TypedDict, total=False):
+class _ArtistRefRequired(TypedDict):
+    name: str
+
+
+class ArtistRef(_ArtistRefRequired, total=False):
     """An artist as referenced inside a track/album (name always present)."""
 
-    name: str
     id: str
 
 
-class AlbumRef(TypedDict, total=False):
-    """An album as referenced inside a track."""
-
+class _AlbumRefRequired(TypedDict):
     name: str
+
+
+class AlbumRef(_AlbumRefRequired, total=False):
+    """An album as referenced inside a track (name always present)."""
+
     id: str
     release_date: str
+
+
+class Followers(TypedDict, total=False):
+    total: int
 
 
 class _TrackRequired(TypedDict):
@@ -53,10 +63,6 @@ class ArtistObject(_ArtistRequired, total=False):
     genres: list[str]
     popularity: int
     followers: Followers
-
-
-class Followers(TypedDict, total=False):
-    total: int
 
 
 class _AlbumRequired(TypedDict):

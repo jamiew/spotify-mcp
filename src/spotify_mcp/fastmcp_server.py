@@ -598,7 +598,7 @@ def get_user_playlists(limit: int = 20, offset: int = 0) -> dict[str, Any]:
 
         playlists = []
         for item in result.get("items", []):
-            item_typed: PlaylistObject = item
+            item_typed = cast("PlaylistObject", item)
             owner = item_typed.get("owner") or {}
             tracks = item_typed.get("tracks") or {}
             playlist = Playlist(

@@ -467,6 +467,15 @@ class TestGetSavedTracks:
         assert result["items"][0]["added_at"] == "2024-01-01T00:00:00Z"
         assert result["items"][0]["name"] == "Never Gonna Give You Up"
 
+    def test_limit_clamped(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_tracks.return_value = {"items": []}
+
+        get_saved_tracks(limit=999)
+
+        mock_spotify_api.current_user_saved_tracks.assert_called_once_with(
+            limit=50, offset=0
+        )
+
     def test_spotify_error(self, mock_spotify_api):
         mock_spotify_api.current_user_saved_tracks.side_effect = SPOTIFY_ERROR
 
