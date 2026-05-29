@@ -50,6 +50,9 @@ uv build
 echo "Build complete!"
 echo ""
 
+# Note: PyPI + MCP Registry publishing is handled by .github/workflows/publish.yml,
+# which fires on the GitHub release created below (via OIDC trusted publishing).
+
 # Get tag annotation for release notes
 RELEASE_NOTES=$(git tag -l --format='%(contents)' "$TAG")
 

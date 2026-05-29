@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.jamiew/spotify-mcp",
+  "description": "MCP server connecting LLMs to Spotify, with smart-batching and large-playlist tools",
+  "title": "Spotify",
+  "repository": {
+    "url": "https://github.com/jamiew/spotify-mcp",
+    "source": "github"
+  },
+  "version": "0.3.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "spotify-mcp-jamiew",
+      "version": "0.3.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SPOTIFY_CLIENT_ID",
+          "description": "Spotify app Client ID from developer.spotify.com",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "SPOTIFY_CLIENT_SECRET",
+          "description": "Spotify app Client Secret from developer.spotify.com",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "SPOTIFY_REDIRECT_URI",
+          "description": "OAuth redirect URI registered in your Spotify app",
+          "isRequired": true,
+          "default": "http://127.0.0.1:8888"
+        }
+      ]
+    }
+  ]
+}

@@ -1092,8 +1092,8 @@ wheels = [
 ]
 
 [[package]]
-name = "spotify-mcp"
-version = "0.2.0"
+name = "spotify-mcp-jamiew"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp", extra = ["cli"] },
@@ -1111,7 +1111,7 @@ dev = [
     { name = "pytest-env" },
     { name = "pytest-mock" },
     { name = "ruff" },
-    { name = "spotify-mcp" },
+    { name = "spotify-mcp-jamiew" },
     { name = "types-requests" },
 ]
 
@@ -1132,7 +1132,7 @@ dev = [
     { name = "pytest-env", specifier = ">=1.6.0" },
     { name = "pytest-mock", specifier = ">=3.15.1" },
     { name = "ruff", specifier = ">=0.15.0" },
-    { name = "spotify-mcp", editable = "." },
+    { name = "spotify-mcp-jamiew", editable = "." },
     { name = "types-requests", specifier = ">=2.33.0" },
 ]
 

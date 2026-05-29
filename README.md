@@ -24,32 +24,112 @@ MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](
 
 ## Installation
 
-### 1. Get Spotify API Keys
-1. Create account at [developer.spotify.com](https://developer.spotify.com/)
-2. Create app with redirect URI: `http://localhost:8888`
+Requires a Spotify **Premium** account and [`uv`](https://docs.astral.sh/uv/) >= 0.54.
 
-### 2. Install the MCP Server
+### 1. Get Spotify API keys
+
+1. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard).
+2. Add redirect URI `http://127.0.0.1:8888` — it must match exactly what you set below.
+3. Copy the **Client ID** and **Client Secret**.
+
+### 2. Add the server to your MCP client
+
+Every client runs the same command — `uvx spotify-mcp-jamiew` — with your three Spotify env vars. No clone, no local path.
+
+**Standard config** (works in most clients):
+
+```json
+{
+  "mcpServers": {
+    "spotify": {
+      "command": "uvx",
+      "args": ["spotify-mcp-jamiew"],
+      "env": {
+        "SPOTIFY_CLIENT_ID": "your_client_id",
+        "SPOTIFY_CLIENT_SECRET": "your_client_secret",
+        "SPOTIFY_REDIRECT_URI": "http://127.0.0.1:8888"
+      }
+    }
+  }
+}
+```
+
+<details>
+<summary>Claude Code</summary>
+
+```bash
+claude mcp add spotify \
+  -e SPOTIFY_CLIENT_ID=your_client_id \
+  -e SPOTIFY_CLIENT_SECRET=your_client_secret \
+  -e SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888 \
+  -- uvx spotify-mcp-jamiew
+```
+
+Add `-s user` to install it globally across all projects. Verify with `claude mcp list`.
+</details>
+
+<details>
+<summary>Claude Desktop</summary>
+
+Add the **standard config** above to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows), then fully restart Claude Desktop.
+</details>
+
+<details>
+<summary>Codex CLI</summary>
+
+```bash
+codex mcp add spotify \
+  --env SPOTIFY_CLIENT_ID=your_client_id \
+  --env SPOTIFY_CLIENT_SECRET=your_client_secret \
+  --env SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888 \
+  -- uvx spotify-mcp-jamiew
+```
+
+Or add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.spotify]
+command = "uvx"
+args = ["spotify-mcp-jamiew"]
+
+[mcp_servers.spotify.env]
+SPOTIFY_CLIENT_ID = "your_client_id"
+SPOTIFY_CLIENT_SECRET = "your_client_secret"
+SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888"
+```
+</details>
+
+<details>
+<summary>Run from source (local dev)</summary>
+
 ```bash
 git clone https://github.com/jamiew/spotify-mcp.git
 cd spotify-mcp
 uv sync
 ```
 
-### 3. Configure Claude Desktop
-Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Then point your client at the checkout:
+
 ```json
-"spotify": {
-  "command": "uv",
-  "args": ["--directory", "/path/to/spotify-mcp", "run", "spotify-mcp"],
-  "env": {
-    "SPOTIFY_CLIENT_ID": "YOUR_CLIENT_ID",
-    "SPOTIFY_CLIENT_SECRET": "YOUR_CLIENT_SECRET",
-    "SPOTIFY_REDIRECT_URI": "http://localhost:8888"
+{
+  "mcpServers": {
+    "spotify": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/spotify-mcp", "run", "spotify-mcp"],
+      "env": {
+        "SPOTIFY_CLIENT_ID": "your_client_id",
+        "SPOTIFY_CLIENT_SECRET": "your_client_secret",
+        "SPOTIFY_REDIRECT_URI": "http://127.0.0.1:8888"
+      }
+    }
   }
 }
 ```
 
-**Requirements**: Spotify Premium account, `uv` >= 0.54
+To run the latest unpublished commit without cloning: `uvx --from git+https://github.com/jamiew/spotify-mcp.git spotify-mcp`.
+</details>
+
+On first use the server opens a browser for Spotify OAuth; the token is cached locally for later runs.
 
 ## Usage Examples
 

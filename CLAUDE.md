@@ -5,7 +5,7 @@ This file provides essential guidance for working with the Spotify MCP server co
 ## Essential Commands
 
 ### Development
-- `uv run spotify-mcp` - Start the MCP server
+- `uv run spotify-mcp` - Start the MCP server (local alias; the package publishes as `spotify-mcp-jamiew`, so end users run `uvx spotify-mcp-jamiew`)
 - `uv sync` - Sync dependencies 
 - `uv run pytest` - Run all tests (must pass before commits)
 - `uv run mypy src/` - Type checking (must pass before commits)
@@ -36,6 +36,22 @@ Detailed explanation of what and why.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
+
+### Releasing
+Publishing is fully automated via OIDC trusted publishing — no tokens stored anywhere.
+
+1. Bump `version` in `pyproject.toml`, commit, and create a GitHub release for tag `vX.Y.Z`
+   (the `/release` skill or `release.sh` does the tag + `gh release create`).
+2. The `release: published` event triggers `.github/workflows/publish.yml`, which tests → builds →
+   publishes to **PyPI** (`pypa/gh-action-pypi-publish`, OIDC) → publishes to the **MCP Registry**
+   (`mcp-publisher login github-oidc`), injecting the tag version into `server.json` at publish time.
+
+The package publishes to PyPI as `spotify-mcp-jamiew` and to the registry as `io.github.jamiew/spotify-mcp`.
+
+One-time setup (already required before the first successful run):
+- PyPI: register a trusted publisher for project `spotify-mcp-jamiew` → owner `jamiew`, repo
+  `spotify-mcp`, workflow `publish.yml`.
+- MCP Registry: the `io.github.jamiew/*` namespace is authenticated automatically via GitHub OIDC.
 
 ## Architecture
 
