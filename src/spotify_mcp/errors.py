@@ -1,15 +1,11 @@
 """Custom error handling for Spotify MCP server."""
+
 from __future__ import annotations
 
-import json
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import mcp.types as types
 from spotipy import SpotifyException
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 class SpotifyMCPErrorCode(Enum):
@@ -69,21 +65,6 @@ class SpotifyMCPError(Exception):
         self.details = details or {}
         self.suggestion = suggestion
         super().__init__(message)
-
-    def to_mcp_error(self) -> types.TextContent:
-        """Convert to MCP-compliant error response."""
-        error_response = {
-            "error": {
-                "code": self.code.value,
-                "message": self.message,
-                "details": self.details,
-            }
-        }
-
-        if self.suggestion:
-            error_response["error"]["suggestion"] = self.suggestion
-
-        return types.TextContent(type="text", text=json.dumps(error_response, indent=2))
 
     @classmethod
     def from_spotify_exception(cls, exc: SpotifyException) -> SpotifyMCPError:
@@ -192,36 +173,6 @@ class SpotifyMCPError(Exception):
             {"http_status": status_code, "original_error": error_message},
         )
 
-    @classmethod
-    def validation_error(cls, field: str, message: str) -> SpotifyMCPError:
-        """Create a validation error."""
-        return cls(
-            SpotifyMCPErrorCode.VALIDATION_ERROR,
-            f"Validation error for '{field}': {message}",
-            {"field": field},
-            "Check the input parameters and try again",
-        )
-
-    @classmethod
-    def no_active_device(cls) -> SpotifyMCPError:
-        """Create a no active device error."""
-        return cls(
-            SpotifyMCPErrorCode.NO_ACTIVE_DEVICE,
-            "No active Spotify device found for playback",
-            {},
-            "Open Spotify on a device (phone, computer, etc.) to enable playback control",
-        )
-
-    @classmethod
-    def premium_required(cls, operation: str) -> SpotifyMCPError:
-        """Create a premium required error."""
-        return cls(
-            SpotifyMCPErrorCode.PREMIUM_REQUIRED,
-            f"Spotify Premium is required for {operation}",
-            {"operation": operation},
-            "Upgrade to Spotify Premium to access this feature",
-        )
-
 
 def convert_spotify_error(e: Exception) -> Exception:
     """Convert Spotify exceptions to appropriate exception types for FastMCP."""
@@ -233,47 +184,3 @@ def convert_spotify_error(e: Exception) -> Exception:
         return ValueError(e.message)
     else:
         return ValueError(f"Unexpected error: {str(e)}")
-
-
-def handle_spotify_error(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Decorator to handle Spotify API errors and convert them to MCP-compliant responses."""
-
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return func(*args, **kwargs)
-        except SpotifyException as e:
-            error = SpotifyMCPError.from_spotify_exception(e)
-            return [error.to_mcp_error()]
-        except SpotifyMCPError as e:
-            return [e.to_mcp_error()]
-        except Exception as e:
-            error = SpotifyMCPError(
-                SpotifyMCPErrorCode.UNKNOWN_ERROR,
-                f"Unexpected error: {str(e)}",
-                {"error_type": type(e).__name__},
-            )
-            return [error.to_mcp_error()]
-
-    return wrapper
-
-
-async def handle_spotify_error_async(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Async decorator to handle Spotify API errors and convert them to MCP-compliant responses."""
-
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return await func(*args, **kwargs)
-        except SpotifyException as e:
-            error = SpotifyMCPError.from_spotify_exception(e)
-            return [error.to_mcp_error()]
-        except SpotifyMCPError as e:
-            return [e.to_mcp_error()]
-        except Exception as e:
-            error = SpotifyMCPError(
-                SpotifyMCPErrorCode.UNKNOWN_ERROR,
-                f"Unexpected error: {str(e)}",
-                {"error_type": type(e).__name__},
-            )
-            return [error.to_mcp_error()]
-
-    return wrapper
