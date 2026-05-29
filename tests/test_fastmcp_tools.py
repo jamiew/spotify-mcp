@@ -36,6 +36,7 @@ from spotify_mcp.fastmcp_server import (
     playback_control,
     playlist_resource,
     remove_tracks_from_playlist,
+    reorder_playlist_tracks,
     search_tracks,
     track_resource,
 )
@@ -494,6 +495,58 @@ class TestModifyPlaylistDetails:
 
         with pytest.raises(ValueError):
             modify_playlist_details("pl1", name="New Name")
+
+
+class TestReorderPlaylistTracks:
+    def test_moves_block_and_returns_snapshot(self, mock_spotify_api):
+        mock_spotify_api.playlist_reorder_items.return_value = {"snapshot_id": "s3"}
+
+        result = reorder_playlist_tracks(
+            "pl1", range_start=0, insert_before=10, range_length=3
+        )
+
+        assert result.status == "success"
+        assert result.snapshot_id == "s3"
+        mock_spotify_api.playlist_reorder_items.assert_called_once_with(
+            "pl1", range_start=0, insert_before=10, range_length=3, snapshot_id=None
+        )
+
+    def test_defaults_to_single_track(self, mock_spotify_api):
+        mock_spotify_api.playlist_reorder_items.return_value = {"snapshot_id": "s3"}
+
+        result = reorder_playlist_tracks("pl1", range_start=5, insert_before=0)
+
+        assert "Moved 1 track" in result.message
+        mock_spotify_api.playlist_reorder_items.assert_called_once_with(
+            "pl1", range_start=5, insert_before=0, range_length=1, snapshot_id=None
+        )
+
+    def test_passes_snapshot_id(self, mock_spotify_api):
+        mock_spotify_api.playlist_reorder_items.return_value = {"snapshot_id": "s4"}
+
+        reorder_playlist_tracks(
+            "pl1", range_start=1, insert_before=4, snapshot_id="prev"
+        )
+
+        mock_spotify_api.playlist_reorder_items.assert_called_once_with(
+            "pl1", range_start=1, insert_before=4, range_length=1, snapshot_id="prev"
+        )
+
+    def test_negative_position_raises(self, mock_spotify_api):
+        with pytest.raises(ValueError, match=">= 0"):
+            reorder_playlist_tracks("pl1", range_start=-1, insert_before=0)
+
+    def test_zero_range_length_raises(self, mock_spotify_api):
+        with pytest.raises(ValueError, match="range_length"):
+            reorder_playlist_tracks(
+                "pl1", range_start=0, insert_before=1, range_length=0
+            )
+
+    def test_spotify_error(self, mock_spotify_api):
+        mock_spotify_api.playlist_reorder_items.side_effect = SPOTIFY_ERROR
+
+        with pytest.raises(ValueError):
+            reorder_playlist_tracks("pl1", range_start=0, insert_before=1)
 
 
 class TestGetUserPlaylists:

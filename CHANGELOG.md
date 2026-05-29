@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- new `reorder_playlist_tracks` tool: move a contiguous block of tracks to a new
+  position within a playlist (zero-based positions, optional snapshot guard)
+
 ## 2026-05-29 — 0.3.1
 - add the `mcp-name:` ownership marker to the README so the MCP Registry can
   verify the PyPI package (0.3.0 published to PyPI but failed registry validation)

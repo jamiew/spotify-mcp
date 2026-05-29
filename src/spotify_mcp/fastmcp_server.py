@@ -979,6 +979,69 @@ def modify_playlist_details(
 
 
 @mcp.tool(
+    title="Reorder Playlist Tracks",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def reorder_playlist_tracks(
+    playlist_id: str,
+    range_start: int,
+    insert_before: int,
+    range_length: int = 1,
+    snapshot_id: str | None = None,
+) -> ActionResult:
+    """Move a contiguous block of tracks to a new position within a playlist.
+
+    Args:
+        playlist_id: Playlist ID
+        range_start: Zero-based position of the first track to move
+        insert_before: Zero-based position to insert the moved block before.
+            Pass the playlist's total track count to move the block to the end.
+        range_length: Number of consecutive tracks to move (default 1)
+        snapshot_id: Optional playlist snapshot ID to guard against concurrent edits
+
+    Returns:
+        ActionResult with the new snapshot_id
+
+    Note: Positions are zero-based. Example: move the first 3 tracks to just
+    before position 10 with range_start=0, range_length=3, insert_before=10.
+    """
+    try:
+        if range_start < 0 or insert_before < 0:
+            raise ValueError("range_start and insert_before must be >= 0")
+        if range_length < 1:
+            raise ValueError("range_length must be >= 1")
+
+        logger.info(
+            f"🔀 Reordering playlist {playlist_id}: move {range_length} track(s) "
+            f"from {range_start} before {insert_before}"
+        )
+        result = spotify_client.playlist_reorder_items(
+            playlist_id,
+            range_start=range_start,
+            insert_before=insert_before,
+            range_length=range_length,
+            snapshot_id=snapshot_id,
+        )
+        return ActionResult(
+            status="success",
+            message=(
+                f"Moved {range_length} track(s) from position {range_start} "
+                f"to before position {insert_before}"
+            ),
+            snapshot_id=result.get("snapshot_id") if result else None,
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
     title="Get Album Info",
     annotations=ToolAnnotations(
         readOnlyHint=True, idempotentHint=True, openWorldHint=True

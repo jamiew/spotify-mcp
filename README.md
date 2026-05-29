@@ -21,7 +21,7 @@ MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](
 ### Enhanced Playlist Tools (New in this fork)
 - **Smart Batch Operations**: Add/remove up to 100 tracks in single API calls
 - **Large Playlist Support**: Efficiently handle playlists with 1000+ tracks using pagination
-- **Advanced Playlist Management**: Create, modify details, bulk track operations
+- **Advanced Playlist Management**: Create, modify details, reorder tracks, bulk track operations
 - **API-Optimized Workflows**: Intelligent batching reduces API calls by 60-80%
 
 ## Installation
