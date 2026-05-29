@@ -19,7 +19,6 @@ class SpotifyMCPErrorCode(Enum):
     # API errors
     API_RATE_LIMITED = "api_rate_limited"
     API_UNAVAILABLE = "api_unavailable"
-    INVALID_REQUEST = "invalid_request"
 
     # Device errors
     NO_ACTIVE_DEVICE = "no_active_device"
@@ -33,12 +32,9 @@ class SpotifyMCPErrorCode(Enum):
 
     # Playback errors
     PLAYBACK_RESTRICTED = "playback_restricted"
-    ALREADY_PLAYING = "already_playing"
-    ALREADY_PAUSED = "already_paused"
 
     # General errors
     UNKNOWN_ERROR = "unknown_error"
-    VALIDATION_ERROR = "validation_error"
 
 
 class SpotifyMCPError(Exception):
@@ -174,13 +170,19 @@ class SpotifyMCPError(Exception):
         )
 
 
+def _format_error(error: SpotifyMCPError) -> str:
+    """Build a model-facing message that keeps the suggestion and error code."""
+    msg = error.message
+    if error.suggestion:
+        msg += f" — {error.suggestion}"
+    return f"{msg} [{error.code.value}]"
+
+
 def convert_spotify_error(e: Exception) -> Exception:
     """Convert Spotify exceptions to appropriate exception types for FastMCP."""
     if isinstance(e, SpotifyException):
-        error = SpotifyMCPError.from_spotify_exception(e)
-        # For FastMCP, we'll raise a ValueError with the error message
-        return ValueError(error.message)
+        return ValueError(_format_error(SpotifyMCPError.from_spotify_exception(e)))
     elif isinstance(e, SpotifyMCPError):
-        return ValueError(e.message)
+        return ValueError(_format_error(e))
     else:
         return ValueError(f"Unexpected error: {str(e)}")

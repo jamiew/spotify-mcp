@@ -7,9 +7,15 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import (
+    ClientCapabilities,
+    ElicitationCapability,
+    Icon,
+    ToolAnnotations,
+)
 from pydantic import BaseModel
 from spotipy import SpotifyException
 
@@ -42,6 +48,12 @@ logging.basicConfig(
 # Create FastMCP app
 mcp = FastMCP("Spotify MCP")
 
+# Shared Spotify glyph (inline data URI) attached to tools/resources/prompts.
+SPOTIFY_ICON = Icon(
+    src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTIiIGZpbGw9IiMxREI5NTQiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTcgMTYuNmEuNy43IDAgMCAxLTEgLjI1Yy0yLjctMS42NS02LjEtMi0xMC4xLTEuMWEuNzUuNzUgMCAxIDEtLjMzLTEuNDZjNC40LTEgOC4yLS42IDExLjIgMS4yNS4zNS4yLjQ2LjY2LjIzIDEuMDZ6bTEuMy0yLjk1YS45NC45NCAwIDAgMS0xLjI5LjNjLTMuMS0xLjktNy44LTIuNDYtMTEuNDUtMS4zNWEuOTQuOTQgMCAxIDEtLjU1LTEuOGM0LjE4LTEuMjcgOS4zNi0uNjUgMTIuOTMgMS41NS40NC4yNy41OC44NS4zNiAxLjN6bS4xLTMuMDdDMTQuNyA4LjQgOC45IDguMiA1LjQzIDkuMjZhMS4xMiAxLjEyIDAgMSAxLS42NS0yLjE1QzguNzYgNS45IDE1LjE4IDYuMTMgMTkuNDUgOC42NmExLjEyIDEuMTIgMCAxIDEtMS4xNSAxLjkyeiIvPjwvc3ZnPg==",
+    mimeType="image/svg+xml",
+)
+
 # Initialize Spotify client
 _client_wrapper = spotify_api.Client()
 spotify_client = _client_wrapper.sp  # Use spotipy client directly
@@ -61,6 +73,7 @@ class Track(BaseModel):
     duration_ms: int | None = None
     popularity: int | None = None
     external_urls: dict[str, str] | None = None
+    added_at: str | None = None
 
 
 class PlaybackState(BaseModel):
@@ -114,6 +127,91 @@ class Album(BaseModel):
     external_urls: dict[str, str] | None = None
 
 
+# Tool result models (give every tool a real output schema)
+class SearchResults(BaseModel):
+    """Paginated search results."""
+
+    items: list[Track]
+    total: int
+    limit: int
+    offset: int
+    next: str | None = None
+    previous: str | None = None
+
+
+class QueueState(BaseModel):
+    """Currently playing track plus the upcoming queue."""
+
+    currently_playing: Track | None = None
+    queue: list[Track]
+
+
+class TrackList(BaseModel):
+    """A list of tracks."""
+
+    tracks: list[Track]
+
+
+class ArtistInfo(BaseModel):
+    """An artist with their top tracks."""
+
+    artist: Artist
+    top_tracks: list[Track]
+
+
+class AlbumInfo(BaseModel):
+    """An album with its tracks."""
+
+    album: Album
+    tracks: list[Track]
+
+
+class PlaylistList(BaseModel):
+    """Paginated list of playlists."""
+
+    items: list[Playlist]
+    total: int
+    limit: int
+    offset: int
+    next: str | None = None
+    previous: str | None = None
+
+
+class PlaylistTracks(BaseModel):
+    """Paginated tracks from a single playlist."""
+
+    items: list[Track]
+    total: int
+    limit: int | None = None
+    offset: int
+    returned: int
+
+
+class SavedTracks(BaseModel):
+    """Paginated saved/liked tracks."""
+
+    items: list[Track]
+    total: int
+    limit: int
+    offset: int
+    next: str | None = None
+    previous: str | None = None
+
+
+class ActionResult(BaseModel):
+    """Result of a state-changing operation."""
+
+    status: str
+    message: str
+    snapshot_id: str | None = None
+
+
+class RemovalConfirmation(BaseModel):
+    """Elicitation schema confirming a destructive playlist edit."""
+
+    confirm: bool = False
+
+
 def parse_track(item: TrackObject) -> Track:
     """Parse Spotify track data into Track model."""
     album_data = item.get("album", {})
@@ -132,14 +230,20 @@ def parse_track(item: TrackObject) -> Track:
     )
 
 
-def get_playlist_tracks_paginated(
-    playlist_id: str, limit: int | None = None, offset: int = 0
+async def get_playlist_tracks_paginated(
+    playlist_id: str,
+    limit: int | None = None,
+    offset: int = 0,
+    ctx: Context | None = None,
+    total: int | None = None,
 ) -> list[Track]:
     """Get playlist tracks with proper pagination support.
     Args:
         playlist_id: Spotify playlist ID
         limit: Maximum number of tracks to return (None for all)
         offset: Number of tracks to skip
+        ctx: Optional MCP context for progress + log notifications
+        total: Total track count, used as the progress denominator
 
     Returns:
         List of Track objects
@@ -177,6 +281,10 @@ def get_playlist_tracks_paginated(
             f"📄 Batch complete: retrieved {len(batch_tracks)} tracks (total so far: {len(tracks)})"
         )
 
+        if ctx is not None:
+            await ctx.report_progress(progress=len(tracks), total=total)
+            await ctx.info(f"Fetched {len(tracks)} tracks so far")
+
         # Update remaining count if we have a limit
         if remaining:
             remaining -= len(batch_tracks)
@@ -203,7 +311,16 @@ def get_playlist_tracks_paginated(
 # === TOOLS ===
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Control Playback",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
 def playback_control(
     action: str, track_id: str | None = None, num_skips: int = 1
@@ -218,7 +335,7 @@ def playback_control(
     try:
         if action == "get":
             logger.info("🎵 Getting current playback state")
-            result = spotify_client.current_user_playing_track()
+            result = spotify_client.current_playback()
         elif action == "start":
             if track_id:
                 logger.info(f"🎵 Starting playback of track: {track_id}")
@@ -226,16 +343,16 @@ def playback_control(
             else:
                 logger.info("🎵 Resuming playback")
                 spotify_client.start_playback()
-            result = spotify_client.current_user_playing_track()
+            result = spotify_client.current_playback()
         elif action == "pause":
             logger.info("🎵 Pausing playback")
             spotify_client.pause_playback()
-            result = spotify_client.current_user_playing_track()
+            result = spotify_client.current_playback()
         elif action == "skip":
             logger.info(f"🎵 Skipping {num_skips} track(s)")
             for _ in range(num_skips):
                 spotify_client.next_track()
-            result = spotify_client.current_user_playing_track()
+            result = spotify_client.current_playback()
         else:
             raise ValueError(f"Invalid action: {action}")
 
@@ -262,7 +379,13 @@ def playback_control(
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Search Spotify",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
 def search_tracks(
     query: str,
@@ -274,7 +397,7 @@ def search_tracks(
     genre: str | None = None,
     artist: str | None = None,
     album: str | None = None,
-) -> dict[str, Any]:
+) -> SearchResults:
     """Search Spotify for tracks, albums, artists, or playlists.
 
     Args:
@@ -289,7 +412,7 @@ def search_tracks(
         album: Filter by album name
 
     Returns:
-        Dict with 'items' (list of tracks) and pagination info ('total', 'limit', 'offset')
+        SearchResults with 'items' (list of tracks) and pagination info ('total', 'limit', 'offset')
 
     Note: Filters use Spotify's search syntax. For large result sets, use offset to paginate.
     Example: query='love', year='2024', genre='pop' searches for 'love year:2024 genre:pop'
@@ -322,12 +445,15 @@ def search_tracks(
         tracks = []
         items_key = f"{qtype}s"
         result_section = result.get(items_key, {})
+        # Spotify can return null entries in items (e.g. removed content), so guard each.
         if qtype == "track" and result_section.get("items"):
-            tracks = [parse_track(item) for item in result_section["items"]]
+            tracks = [parse_track(item) for item in result_section["items"] if item]
         else:
             # Convert other types to track-like format for consistency
             if result_section.get("items"):
                 for item in result_section["items"]:
+                    if not item:
+                        continue
                     track = Track(
                         name=item["name"],
                         id=item["id"],
@@ -344,42 +470,57 @@ def search_tracks(
         )
         log_pagination_info("search_tracks", total_results, limit, offset)
 
-        return {
-            "items": tracks,
-            "total": total_results,
-            "limit": result_section.get("limit", limit),
-            "offset": result_section.get("offset", offset),
-            "next": result_section.get("next"),
-            "previous": result_section.get("previous"),
-        }
+        return SearchResults(
+            items=tracks,
+            total=total_results,
+            limit=result_section.get("limit", limit),
+            offset=result_section.get("offset", offset),
+            next=result_section.get("next"),
+            previous=result_section.get("previous"),
+        )
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Add to Queue",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def add_to_queue(track_id: str) -> dict[str, str]:
+def add_to_queue(track_id: str) -> ActionResult:
     """Add a track to the playback queue.
 
     Args:
         track_id: Spotify track ID to add to queue
     Returns:
-        Dict with status and message
+        Status and message
     """
     try:
         logger.info(f"🎵 Adding track {track_id} to queue")
         spotify_client.add_to_queue(f"spotify:track:{track_id}")
-        return {"status": "success", "message": "Added track to queue"}
+        return ActionResult(status="success", message="Added track to queue")
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Get Queue",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def get_queue() -> dict[str, Any]:
+def get_queue() -> QueueState:
     """Get the current playback queue.
     Returns:
-        Dict with currently_playing track and queue of upcoming tracks
+        Currently playing track and queue of upcoming tracks
     """
     try:
         logger.info("🎵 Getting playback queue")
@@ -389,26 +530,32 @@ def get_queue() -> dict[str, Any]:
         if result.get("queue"):
             queue_tracks = [parse_track(item) for item in result["queue"]]
 
-        return {
-            "currently_playing": parse_track(result["currently_playing"]).model_dump()
+        return QueueState(
+            currently_playing=parse_track(result["currently_playing"])
             if result.get("currently_playing")
             else None,
-            "queue": [track.model_dump() for track in queue_tracks],
-        }
+            queue=queue_tracks,
+        )
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Get Track Info",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def get_track_info(track_ids: str | list[str]) -> dict[str, Any]:
+def get_track_info(track_ids: str | list[str]) -> TrackList:
     """Get detailed information about one or more Spotify tracks.
 
     Args:
         track_ids: Single track ID or list of track IDs (up to 50)
 
     Returns:
-        Dict with 'tracks' list containing track metadata including release_date.
+        TrackList with 'tracks' containing track metadata including release_date.
         For single ID, returns {'tracks': [track]}.
 
     Note: Batch lookup is much more efficient - 50 tracks = 1 API call instead of 50.
@@ -424,29 +571,31 @@ def get_track_info(track_ids: str | list[str]) -> dict[str, Any]:
 
         if len(ids) == 1:
             result = spotify_client.track(ids[0])
-            tracks = [parse_track(result).model_dump()]
+            tracks = [parse_track(result)]
         else:
             result = spotify_client.tracks(ids)
-            tracks = [
-                parse_track(item).model_dump()
-                for item in result.get("tracks", [])
-                if item
-            ]
+            tracks = [parse_track(item) for item in result.get("tracks", []) if item]
 
-        return {"tracks": tracks}
+        return TrackList(tracks=tracks)
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Get Artist Info",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def get_artist_info(artist_id: str) -> dict[str, Any]:
+def get_artist_info(artist_id: str) -> ArtistInfo:
     """Get detailed information about a Spotify artist.
 
     Args:
         artist_id: Spotify artist ID
     Returns:
-        Dict with artist info and top tracks
+        ArtistInfo with the artist and their top tracks
     """
     try:
         logger.info(f"🎤 Getting artist info: {artist_id}")
@@ -464,24 +613,27 @@ def get_artist_info(artist_id: str) -> dict[str, Any]:
 
         tracks = [parse_track(track) for track in top_tracks.get("tracks", [])[:10]]
 
-        return {
-            "artist": artist.model_dump(),
-            "top_tracks": [track.model_dump() for track in tracks],
-        }
+        return ArtistInfo(artist=artist, top_tracks=tracks)
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Get Playlist Info",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def get_playlist_info(playlist_id: str) -> dict[str, Any]:
+def get_playlist_info(playlist_id: str) -> Playlist:
     """Get basic information about a Spotify playlist.
 
     Args:
         playlist_id: Spotify playlist ID
 
     Returns:
-        Dict with playlist metadata (no tracks - use get_playlist_tracks for tracks)
+        Playlist metadata (no tracks - use get_playlist_tracks for tracks)
 
     Note: This returns playlist info only. For tracks, use get_playlist_tracks
     which supports full pagination for large playlists.
@@ -504,16 +656,23 @@ def get_playlist_info(playlist_id: str) -> dict[str, Any]:
             public=result.get("public"),
         )
 
-        return playlist.model_dump()
+        return playlist
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Create Playlist",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def create_playlist(
-    name: str, description: str = "", public: bool = True
-) -> dict[str, Any]:
+def create_playlist(name: str, description: str = "", public: bool = True) -> Playlist:
     """Create a new Spotify playlist.
 
     Args:
@@ -522,7 +681,7 @@ def create_playlist(
         public: Whether playlist is public (default: True)
 
     Returns:
-        Dict with created playlist information
+        The created Playlist
     """
     try:
         logger.info(f"🎧 Creating playlist: '{name}' (public={public})")
@@ -541,15 +700,24 @@ def create_playlist(
             public=result.get("public"),
         )
 
-        return playlist.model_dump()
+        return playlist
 
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Add Tracks to Playlist",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> dict[str, str]:
+def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> ActionResult:
     """Add tracks to a playlist.
 
     Args:
@@ -564,16 +732,26 @@ def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> dict[str,
         ]
 
         logger.info(f"🎧 Adding {len(uris)} tracks to playlist {playlist_id}")
-        spotify_client.playlist_add_items(playlist_id, uris)
-        return {"status": "success", "message": f"Added {len(uris)} tracks to playlist"}
+        result = spotify_client.playlist_add_items(playlist_id, uris)
+        return ActionResult(
+            status="success",
+            message=f"Added {len(uris)} tracks to playlist",
+            snapshot_id=result.get("snapshot_id") if result else None,
+        )
 
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="List My Playlists",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def get_user_playlists(limit: int = 20, offset: int = 0) -> dict[str, Any]:
+def get_user_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
     """Get current user's playlists with pagination support.
 
     Args:
@@ -581,7 +759,7 @@ def get_user_playlists(limit: int = 20, offset: int = 0) -> dict[str, Any]:
         offset: Number of playlists to skip for pagination (default 0)
 
     Returns:
-        Dict with 'items' (list of playlists) and pagination info ('total', 'limit', 'offset')
+        PlaylistList with 'items' (list of playlists) and pagination info ('total', 'limit', 'offset')
 
     Note: For users with many playlists, use offset to paginate through results.
     Example: offset=0 gets playlists 1-20, offset=20 gets playlists 21-40, etc.
@@ -611,24 +789,33 @@ def get_user_playlists(limit: int = 20, offset: int = 0) -> dict[str, Any]:
             )
             playlists.append(playlist)
 
-        return {
-            "items": playlists,
-            "total": result.get("total", 0),
-            "limit": result.get("limit", limit),
-            "offset": result.get("offset", offset),
-            "next": result.get("next"),
-            "previous": result.get("previous"),
-        }
+        return PlaylistList(
+            items=playlists,
+            total=result.get("total", 0),
+            limit=result.get("limit", limit),
+            offset=result.get("offset", offset),
+            next=result.get("next"),
+            previous=result.get("previous"),
+        )
 
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Get Playlist Tracks",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def get_playlist_tracks(
-    playlist_id: str, limit: int | None = None, offset: int = 0
-) -> dict[str, Any]:
+async def get_playlist_tracks(
+    playlist_id: str,
+    limit: int | None = None,
+    offset: int = 0,
+    ctx: Context | None = None,
+) -> PlaylistTracks:
     """Get tracks from a playlist with full pagination support.
 
     Args:
@@ -637,7 +824,7 @@ def get_playlist_tracks(
         offset: Number of tracks to skip for pagination (default 0)
 
     Returns:
-        Dict with 'items' (list of tracks), 'total', 'limit', 'offset'
+        PlaylistTracks with 'items' (list of tracks), 'total', 'limit', 'offset'
 
     Note: Large playlists require pagination. Use limit/offset to get specific ranges:
     - Get first 100: limit=100, offset=0
@@ -648,33 +835,47 @@ def get_playlist_tracks(
         logger.info(
             f"📋 Getting playlist tracks: {playlist_id} (limit={limit}, offset={offset})"
         )
-        tracks = get_playlist_tracks_paginated(playlist_id, limit, offset)
 
-        # Get total track count from playlist info
+        # Fetch total up front so progress notifications have a denominator
         playlist_info = spotify_client.playlist(playlist_id, fields="tracks.total")
-        total_tracks = playlist_info.get("tracks", {}).get("total", len(tracks))
+        total_tracks = (playlist_info.get("tracks") or {}).get("total")
+
+        tracks = await get_playlist_tracks_paginated(
+            playlist_id, limit, offset, ctx=ctx, total=total_tracks
+        )
+        if total_tracks is None:
+            total_tracks = len(tracks)
 
         # Log pagination info
         log_pagination_info("get_playlist_tracks", total_tracks, limit, offset)
         logger.info(f"📋 Retrieved {len(tracks)} tracks from playlist {playlist_id}")
 
-        return {
-            "items": tracks,
-            "total": total_tracks,
-            "limit": limit,
-            "offset": offset,
-            "returned": len(tracks),
-        }
+        return PlaylistTracks(
+            items=tracks,
+            total=total_tracks,
+            limit=limit,
+            offset=offset,
+            returned=len(tracks),
+        )
 
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Remove Tracks from Playlist",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def remove_tracks_from_playlist(
-    playlist_id: str, track_uris: list[str]
-) -> dict[str, str]:
+async def remove_tracks_from_playlist(
+    playlist_id: str, track_uris: list[str], ctx: Context | None = None
+) -> ActionResult:
     """Remove tracks from a playlist.
 
     Args:
@@ -688,25 +889,61 @@ def remove_tracks_from_playlist(
             for uri in track_uris
         ]
 
+        # Confirm this destructive op, but only when the client actually
+        # advertises elicitation support. If it doesn't, proceed so this core
+        # op never hard-fails on capability-poor clients. If it does support
+        # elicitation and the prompt errors, we let that propagate rather than
+        # silently deleting — an unconfirmed destructive edit must not slip through.
+        if ctx is not None and ctx.session.check_client_capability(
+            ClientCapabilities(elicitation=ElicitationCapability())
+        ):
+            response = await ctx.elicit(
+                message=(
+                    f"Remove {len(uris)} track(s) from playlist {playlist_id}? "
+                    "This cannot be undone."
+                ),
+                schema=RemovalConfirmation,
+            )
+            confirmed = response.action == "accept" and bool(
+                response.data and response.data.confirm
+            )
+            if not confirmed:
+                return ActionResult(
+                    status="cancelled",
+                    message="Removal cancelled by user",
+                )
+
         logger.info(f"🚮 Removing {len(uris)} tracks from playlist {playlist_id}")
-        spotify_client.playlist_remove_all_occurrences_of_items(playlist_id, uris)
-        return {
-            "status": "success",
-            "message": f"Removed {len(uris)} tracks from playlist",
-        }
+        result = spotify_client.playlist_remove_all_occurrences_of_items(
+            playlist_id, uris
+        )
+        return ActionResult(
+            status="success",
+            message=f"Removed {len(uris)} tracks from playlist",
+            snapshot_id=result.get("snapshot_id") if result else None,
+        )
 
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Edit Playlist Details",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
 def modify_playlist_details(
     playlist_id: str,
     name: str | None = None,
     description: str | None = None,
     public: bool | None = None,
-) -> dict[str, str]:
+) -> ActionResult:
     """Modify playlist details.
 
     Args:
@@ -733,22 +970,30 @@ def modify_playlist_details(
         spotify_client.playlist_change_details(
             playlist_id, name=name, description=description, public=public
         )
-        return {"status": "success", "message": "Playlist details updated successfully"}
+        return ActionResult(
+            status="success", message="Playlist details updated successfully"
+        )
 
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Get Album Info",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def get_album_info(album_id: str) -> dict[str, Any]:
+def get_album_info(album_id: str) -> AlbumInfo:
     """Get detailed information about a Spotify album.
 
     Args:
         album_id: Spotify album ID
 
     Returns:
-        Dict with album metadata including release_date, label, tracks
+        AlbumInfo with album metadata (release_date, label) and its tracks
     """
     try:
         logger.info(f"💿 Getting album info: {album_id}")
@@ -784,19 +1029,22 @@ def get_album_info(album_id: str) -> dict[str, Any]:
                         "release_date": result.get("release_date"),
                     },
                 )
-                tracks.append(parse_track(item).model_dump())
+                tracks.append(parse_track(item))
 
-        return {
-            "album": album.model_dump(),
-            "tracks": tracks,
-        }
+        return AlbumInfo(album=album, tracks=tracks)
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Get Liked Songs",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
 @log_tool_execution
-def get_saved_tracks(limit: int = 20, offset: int = 0) -> dict[str, Any]:
+def get_saved_tracks(limit: int = 20, offset: int = 0) -> SavedTracks:
     """Get user's saved/liked tracks (Liked Songs library).
 
     Args:
@@ -804,7 +1052,7 @@ def get_saved_tracks(limit: int = 20, offset: int = 0) -> dict[str, Any]:
         offset: Number of tracks to skip for pagination (default 0)
 
     Returns:
-        Dict with 'items' (list of tracks with added_at timestamp) and pagination info
+        SavedTracks with 'items' (tracks with added_at timestamp) and pagination info
     """
     try:
         limit = max(1, min(50, limit))
@@ -815,20 +1063,20 @@ def get_saved_tracks(limit: int = 20, offset: int = 0) -> dict[str, Any]:
         tracks = []
         for item in result.get("items", []):
             if item and item.get("track"):
-                track_data = parse_track(item["track"]).model_dump()
-                track_data["added_at"] = item.get("added_at")
-                tracks.append(track_data)
+                track = parse_track(item["track"])
+                track.added_at = item.get("added_at")
+                tracks.append(track)
 
         log_pagination_info("get_saved_tracks", result.get("total", 0), limit, offset)
 
-        return {
-            "items": tracks,
-            "total": result.get("total", 0),
-            "limit": result.get("limit", limit),
-            "offset": result.get("offset", offset),
-            "next": result.get("next"),
-            "previous": result.get("previous"),
-        }
+        return SavedTracks(
+            items=tracks,
+            total=result.get("total", 0),
+            limit=result.get("limit", limit),
+            offset=result.get("offset", offset),
+            next=result.get("next"),
+            previous=result.get("previous"),
+        )
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
@@ -836,7 +1084,7 @@ def get_saved_tracks(limit: int = 20, offset: int = 0) -> dict[str, Any]:
 # === RESOURCES ===
 
 
-@mcp.resource("spotify://user/current")
+@mcp.resource("spotify://user/current", icons=[SPOTIFY_ICON])
 def current_user() -> str:
     """Current user's profile."""
     try:
@@ -854,11 +1102,11 @@ def current_user() -> str:
         return json.dumps({"error": str(e)})
 
 
-@mcp.resource("spotify://playback/current")
+@mcp.resource("spotify://playback/current", icons=[SPOTIFY_ICON])
 def current_playback_resource() -> str:
     """Current playback state."""
     try:
-        playback = spotify_client.current_user_playing_track()
+        playback = spotify_client.current_playback()
         if not playback:
             return json.dumps({"status": "no_playback"})
 
@@ -882,10 +1130,81 @@ def current_playback_resource() -> str:
         return json.dumps({"error": str(e)})
 
 
+@mcp.resource("spotify://track/{track_id}", icons=[SPOTIFY_ICON])
+def track_resource(track_id: str) -> str:
+    """A single track by ID."""
+    try:
+        return parse_track(spotify_client.track(track_id)).model_dump_json()
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.resource("spotify://playlist/{playlist_id}", icons=[SPOTIFY_ICON])
+def playlist_resource(playlist_id: str) -> str:
+    """A playlist's metadata by ID (no tracks)."""
+    try:
+        result = spotify_client.playlist(
+            playlist_id, fields="id,name,description,owner,public,tracks.total"
+        )
+        owner = result.get("owner") or {}
+        tracks = result.get("tracks") or {}
+        return Playlist(
+            name=result["name"],
+            id=result["id"],
+            owner=owner.get("display_name"),
+            description=result.get("description"),
+            total_tracks=tracks.get("total"),
+            public=result.get("public"),
+        ).model_dump_json()
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.resource("spotify://artist/{artist_id}", icons=[SPOTIFY_ICON])
+def artist_resource(artist_id: str) -> str:
+    """An artist by ID."""
+    try:
+        result = spotify_client.artist(artist_id)
+        followers = result.get("followers") or {}
+        return Artist(
+            name=result["name"],
+            id=result["id"],
+            genres=result.get("genres", []),
+            popularity=result.get("popularity"),
+            followers=followers.get("total"),
+        ).model_dump_json()
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.resource("spotify://album/{album_id}", icons=[SPOTIFY_ICON])
+def album_resource(album_id: str) -> str:
+    """An album's metadata by ID (no tracks)."""
+    try:
+        result = spotify_client.album(album_id)
+        artists = result.get("artists", [])
+        return Album(
+            name=result["name"],
+            id=result["id"],
+            artist=artists[0]["name"] if artists else "Unknown",
+            artists=[a["name"] for a in artists],
+            release_date=result.get("release_date"),
+            release_date_precision=result.get("release_date_precision"),
+            total_tracks=result.get("total_tracks"),
+            album_type=result.get("album_type"),
+            label=result.get("label"),
+            genres=result.get("genres", []),
+            popularity=result.get("popularity"),
+            external_urls=cast("dict[str, str]", result.get("external_urls")),
+        ).model_dump_json()
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 # === PROMPTS ===
 
 
-@mcp.prompt()
+@mcp.prompt(icons=[SPOTIFY_ICON])
 def create_mood_playlist(mood: str, genre: str = "", decade: str = "") -> str:
     """Create a playlist based on mood and preferences."""
     prompt = f"Create a Spotify playlist for a {mood} mood"
@@ -916,7 +1235,7 @@ Consider:
 4. 15-20 songs with good flow"""
 
 
-@mcp.prompt()
+@mcp.prompt(icons=[SPOTIFY_ICON])
 def analyze_large_playlist(playlist_id: str, analysis_type: str = "overview") -> str:
     """Analyze a large playlist efficiently using pagination."""
     return f"""Analyze playlist {playlist_id} with focus on {analysis_type}.
@@ -946,7 +1265,7 @@ Pagination Benefits:
 - Allows progressive analysis with user feedback"""
 
 
-@mcp.prompt()
+@mcp.prompt(icons=[SPOTIFY_ICON])
 def discover_music_systematically(
     seed_query: str, exploration_depth: str = "medium"
 ) -> str:

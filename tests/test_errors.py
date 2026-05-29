@@ -121,6 +121,33 @@ class TestSpotifyErrorHandling:
         # Could be caught by device error or 404 handling
         assert "device" in str(result).lower() or "not found" in str(result).lower()
 
+    def test_handle_403_playback_restricted(self):
+        """403 that is neither premium nor scope maps to playback restricted."""
+        error = SpotifyException(403, -1, "Player command failed: restricted")
+
+        result = convert_spotify_error(error)
+
+        assert isinstance(result, ValueError)
+        assert "restricted" in str(result).lower()
+
+    def test_handle_404_user_not_found(self):
+        """404 mentioning a user maps to USER_NOT_FOUND."""
+        error = SpotifyException(404, -1, "user not found")
+
+        result = convert_spotify_error(error)
+
+        assert isinstance(result, ValueError)
+        assert "user" in str(result).lower()
+
+    def test_device_not_found_error(self):
+        """A 'device not found' message maps to DEVICE_NOT_FOUND."""
+        error = SpotifyException(400, -1, "Device not found")
+
+        result = convert_spotify_error(error)
+
+        assert isinstance(result, ValueError)
+        assert "device" in str(result).lower()
+
 
 class TestSpotifyMCPError:
     """Test SpotifyMCPError class functionality."""
