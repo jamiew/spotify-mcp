@@ -2,7 +2,7 @@
 FastMCP test configuration and fixtures.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -123,6 +123,16 @@ def mock_spotify_api(mock_spotify_client):
     """Mock the spotify_api module."""
     with patch("spotify_mcp.fastmcp_server.spotify_client", mock_spotify_client):
         yield mock_spotify_client
+
+
+@pytest.fixture
+def mock_context():
+    """A mock MCP Context with async progress/log/elicit methods."""
+    ctx = MagicMock()
+    ctx.report_progress = AsyncMock()
+    ctx.info = AsyncMock()
+    ctx.elicit = AsyncMock()
+    return ctx
 
 
 @pytest.fixture
