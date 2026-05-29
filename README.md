@@ -1,5 +1,7 @@
 # spotify-mcp MCP server
 
+mcp-name: io.github.jamiew/spotify-mcp
+
 MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](https://github.com/varunneal/spotify-mcp) adds smart-batching tools and advanced playlist features that optimize API usage.
 
 ## Features

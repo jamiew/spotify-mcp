@@ -1,6 +1,6 @@
 [project]
 name = "spotify-mcp-jamiew"
-version = "0.3.0"
+version = "0.3.1"
 description = "MCP server connecting LLMs to Spotify, with smart-batching and large-playlist tools"
 readme = "README.md"
 requires-python = ">=3.12"

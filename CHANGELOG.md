@@ -1,6 +1,10 @@
 # Changelog
 
-## 2026-05-29
+## 2026-05-29 — 0.3.1
+- add the `mcp-name:` ownership marker to the README so the MCP Registry can
+  verify the PyPI package (0.3.0 published to PyPI but failed registry validation)
+
+## 2026-05-29 — 0.3.0
 
 ### Packaging & distribution
 - published to PyPI as `spotify-mcp-jamiew` and to the MCP Registry as
