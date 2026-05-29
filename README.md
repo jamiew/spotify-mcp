@@ -102,6 +102,39 @@ SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888"
 </details>
 
 <details>
+<summary>Hermes</summary>
+
+Add to `~/.hermes/config.yaml`, then run `/reload-mcp` (or restart Hermes):
+
+```yaml
+mcp_servers:
+  spotify:
+    command: uvx
+    args: [spotify-mcp-jamiew]
+    env:
+      SPOTIFY_CLIENT_ID: your_client_id
+      SPOTIFY_CLIENT_SECRET: your_client_secret
+      SPOTIFY_REDIRECT_URI: http://127.0.0.1:8888
+```
+</details>
+
+<details>
+<summary>OpenClaw</summary>
+
+Add the **standard config** above to `~/.openclaw/openclaw.json` (under `mcpServers`), then `openclaw gateway restart`.
+</details>
+
+<details>
+<summary>Other clients (mcp.json)</summary>
+
+Most MCP clients read a JSON file with an `mcpServers` block — drop the **standard config** above into it.
+
+Using something else? Paste this to your agent:
+
+> Install the spotify-mcp MCP server from https://github.com/jamiew/spotify-mcp — it's on PyPI as `spotify-mcp-jamiew`, run it with `uvx spotify-mcp-jamiew`, and set env vars `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, and `SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888`.
+</details>
+
+<details>
 <summary>Run from source (local dev)</summary>
 
 ```bash
