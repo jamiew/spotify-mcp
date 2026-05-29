@@ -3,6 +3,12 @@
 ## Unreleased
 - new `reorder_playlist_tracks` tool: move a contiguous block of tracks to a new
   position within a playlist (zero-based positions, optional snapshot guard)
+- optional **streamable-HTTP transport** for remote hosting: set
+  `SPOTIFY_MCP_TRANSPORT=streamable-http` (host/port/stateless/bearer via env)
+- headless OAuth: seed a `SPOTIFY_REFRESH_TOKEN` or `SPOTIFY_CACHE_PATH` so hosted
+  deploys never need a browser; local stdio still auto-opens one
+- `deploy/modal_app.py` + Dockerfile/EXPOSE notes for deploying to Modal (stateless)
+  or self-hosting; see `PLAN.md` for the full deployment guide
 
 ## 2026-05-29 — 0.3.1
 - add the `mcp-name:` ownership marker to the README so the MCP Registry can

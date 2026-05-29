@@ -35,5 +35,11 @@ RUN addgroup -g 1001 -S spotify && \
 
 USER spotify
 
+# Default is stdio. For remote/streamable-HTTP hosting, run with:
+#   -e SPOTIFY_MCP_TRANSPORT=streamable-http -e SPOTIFY_MCP_HOST=0.0.0.0 -p 8000:8000
+# and supply SPOTIFY_CLIENT_ID/SECRET plus a headless token
+# (SPOTIFY_REFRESH_TOKEN, or SPOTIFY_CACHE_PATH on a mounted volume).
+EXPOSE 8000
+
 # Command to run the MCP server
 CMD ["spotify-mcp"]
