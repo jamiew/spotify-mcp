@@ -273,8 +273,9 @@ async def get_playlist_tracks_paginated(
         # Parse and add tracks
         batch_tracks = []
         for item in tracks_result["items"]:
-            if item and item.get("track"):
-                batch_tracks.append(parse_track(item["track"]))
+            track_obj = (item or {}).get("track")
+            if track_obj and track_obj.get("id"):
+                batch_tracks.append(parse_track(track_obj))
 
         tracks.extend(batch_tracks)
         logger.info(
@@ -837,8 +838,10 @@ async def get_playlist_tracks(
         )
 
         # Fetch total up front so progress notifications have a denominator
-        playlist_info = spotify_client.playlist(playlist_id, fields="tracks.total")
-        total_tracks = (playlist_info.get("tracks") or {}).get("total")
+        head = spotify_client.playlist_items(
+            playlist_id, limit=1, offset=0, fields="total"
+        )
+        total_tracks = (head or {}).get("total")
 
         tracks = await get_playlist_tracks_paginated(
             playlist_id, limit, offset, ctx=ctx, total=total_tracks

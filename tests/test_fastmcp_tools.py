@@ -590,7 +590,7 @@ class TestGetPlaylistTracks:
             "total": 2,
             "next": None,
         }
-        mock_spotify_api.playlist.return_value = {"tracks": {"total": 2}}
+        mock_spotify_api.playlist_items.return_value = {"total": 2}
 
         result = await get_playlist_tracks("pl1", limit=50)
 
@@ -605,11 +605,43 @@ class TestGetPlaylistTracks:
             "total": 2,
             "next": None,
         }
-        mock_spotify_api.playlist.return_value = {"tracks": {"total": 2}}
+        mock_spotify_api.playlist_items.return_value = {"total": 2}
 
         result = await get_playlist_tracks("pl1", limit=50)
 
         assert result.returned == 1
+
+    async def test_skips_tracks_without_id(self, mock_spotify_api, sample_track_data):
+        # Local files and unavailable/removed tracks come back with "id": None
+        local_file = {**sample_track_data, "id": None}
+        mock_spotify_api.playlist_tracks.return_value = {
+            "items": [{"track": sample_track_data}, {"track": local_file}],
+            "total": 2,
+            "next": None,
+        }
+        mock_spotify_api.playlist_items.return_value = {"total": 2}
+
+        result = await get_playlist_tracks("pl1", limit=50)
+
+        assert result.returned == 1
+        assert result.items[0].id == sample_track_data["id"]
+
+    async def test_total_uses_playlist_items_head_request(
+        self, mock_spotify_api, sample_track_data
+    ):
+        mock_spotify_api.playlist_tracks.return_value = {
+            "items": [{"track": sample_track_data}],
+            "next": None,
+        }
+        mock_spotify_api.playlist_items.return_value = {"total": 42}
+
+        result = await get_playlist_tracks("pl1", limit=50)
+
+        assert result.total == 42
+        mock_spotify_api.playlist_items.assert_called_once_with(
+            "pl1", limit=1, offset=0, fields="total"
+        )
+        mock_spotify_api.playlist.assert_not_called()
 
     async def test_spotify_error(self, mock_spotify_api):
         mock_spotify_api.playlist_tracks.side_effect = SPOTIFY_ERROR
@@ -625,7 +657,7 @@ class TestGetPlaylistTracks:
             "total": 1,
             "next": None,
         }
-        mock_spotify_api.playlist.return_value = {"tracks": {"total": 1}}
+        mock_spotify_api.playlist_items.return_value = {"total": 1}
 
         await get_playlist_tracks("pl1", limit=50, ctx=mock_context)
 
@@ -646,7 +678,7 @@ class TestGetPlaylistTracks:
             "next": None,
         }
         mock_spotify_api.playlist_tracks.side_effect = [batch1, batch2]
-        mock_spotify_api.playlist.return_value = {"tracks": {"total": 150}}
+        mock_spotify_api.playlist_items.return_value = {"total": 150}
 
         result = await get_playlist_tracks("pl1", limit=150)
 
@@ -666,7 +698,7 @@ class TestGetPlaylistTracks:
             "total": 500,
             "next": "https://api.spotify.com/next",
         }
-        mock_spotify_api.playlist.return_value = {"tracks": {"total": 500}}
+        mock_spotify_api.playlist_items.return_value = {"total": 500}
 
         result = await get_playlist_tracks("pl1", limit=100)
 
@@ -675,7 +707,7 @@ class TestGetPlaylistTracks:
 
     async def test_empty_playlist_returns_no_tracks(self, mock_spotify_api):
         mock_spotify_api.playlist_tracks.return_value = {"items": []}
-        mock_spotify_api.playlist.return_value = {"tracks": {"total": 0}}
+        mock_spotify_api.playlist_items.return_value = {"total": 0}
 
         result = await get_playlist_tracks("pl1")
 
@@ -685,12 +717,12 @@ class TestGetPlaylistTracks:
     async def test_total_falls_back_to_returned_count(
         self, mock_spotify_api, sample_track_data
     ):
-        # playlist() omits tracks.total -> total should fall back to len(tracks)
+        # playlist_items() omits total -> total should fall back to len(tracks)
         mock_spotify_api.playlist_tracks.return_value = {
             "items": [{"track": sample_track_data}],
             "next": None,
         }
-        mock_spotify_api.playlist.return_value = {}
+        mock_spotify_api.playlist_items.return_value = {}
 
         result = await get_playlist_tracks("pl1", limit=50)
 
