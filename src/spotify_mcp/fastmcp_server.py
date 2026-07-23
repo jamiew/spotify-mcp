@@ -64,7 +64,7 @@ class Track(BaseModel):
     """A Spotify track with metadata."""
 
     name: str
-    id: str
+    id: str | None = None
     artist: str
     artists: list[str] | None = None
     album: str | None = None
@@ -74,6 +74,7 @@ class Track(BaseModel):
     popularity: int | None = None
     external_urls: dict[str, str] | None = None
     added_at: str | None = None
+    is_local: bool = False
 
 
 class PlaybackState(BaseModel):
@@ -213,12 +214,16 @@ class RemovalConfirmation(BaseModel):
 
 
 def parse_track(item: TrackObject) -> Track:
-    """Parse Spotify track data into Track model."""
+    """Parse Spotify track data into Track model.
+
+    Tolerates entries with no ID (local files, unavailable/removed tracks):
+    they are returned with `id=None` rather than dropped or raising.
+    """
     album_data = item.get("album", {})
     artists = item.get("artists", [])
     return Track(
-        name=item["name"],
-        id=item["id"],
+        name=item.get("name") or "Unknown",
+        id=item.get("id"),
         artist=artists[0]["name"] if artists else "Unknown",
         artists=[a["name"] for a in artists],
         album=album_data.get("name"),
@@ -227,6 +232,37 @@ def parse_track(item: TrackObject) -> Track:
         duration_ms=item.get("duration_ms"),
         popularity=item.get("popularity"),
         external_urls=cast("dict[str, str]", item.get("external_urls")),
+        is_local=bool(item.get("is_local", False)),
+    )
+
+
+def extract_playlist_entry(row: object) -> TrackObject | None:
+    """Pull the track object out of one playlist-items row.
+
+    The Web API returns the entry under "item"; historically it was "track",
+    which spotipy fixtures and older responses still use. Accept either, and
+    ignore anything that is not an object (the nested "track" flag inside an
+    entry is a bool, not a track).
+    """
+    if not isinstance(row, dict):
+        return None
+    for key in ("track", "item"):
+        entry = row.get(key)
+        if isinstance(entry, dict):
+            return cast("TrackObject", entry)
+    return None
+
+
+def placeholder_track(row: dict[str, object]) -> Track:
+    """Stand-in for a row whose entry is null (removed/region-locked track).
+
+    Kept in the list so positions stay aligned with the playlist itself.
+    """
+    return Track(
+        name="Unavailable",
+        id=None,
+        artist="Unknown",
+        is_local=bool(row.get("is_local", False)),
     )
 
 
@@ -248,55 +284,59 @@ async def get_playlist_tracks_paginated(
     Returns:
         List of Track objects
     """
-    tracks = []
+    tracks: list[Track] = []
     current_offset = offset
-    batch_size = min(limit, 100) if limit else 100  # Spotify API max is 100 per request
-    remaining = limit
+    remaining = limit  # None means "every track"
+    unavailable = 0
 
     logger.info(
         f"📄 Starting paginated fetch for playlist {playlist_id} (limit={limit}, offset={offset})"
     )
 
     while True:
-        # Determine how many to fetch in this batch
-        batch_limit = min(batch_size, remaining) if remaining else batch_size
+        # Spotify API max is 100 per request
+        batch_limit = 100 if remaining is None else min(100, remaining)
+        if batch_limit <= 0:
+            break
 
         logger.info(f"📄 Fetching batch: offset={current_offset}, limit={batch_limit}")
-        # Get playlist tracks with pagination
         tracks_result = spotify_client.playlist_tracks(
             playlist_id, limit=batch_limit, offset=current_offset
         )
 
-        if not tracks_result or not tracks_result.get("items"):
+        rows = (tracks_result or {}).get("items") or []
+        if not rows:
             break
 
-        # Parse and add tracks
-        batch_tracks = []
-        for item in tracks_result["items"]:
-            track_obj = (item or {}).get("track")
-            if track_obj and track_obj.get("id"):
-                batch_tracks.append(parse_track(track_obj))
+        for row in rows:
+            entry = extract_playlist_entry(row)
+            if entry is None:
+                unavailable += 1
+                tracks.append(placeholder_track(row if isinstance(row, dict) else {}))
+                continue
+            tracks.append(parse_track(entry))
 
-        tracks.extend(batch_tracks)
         logger.info(
-            f"📄 Batch complete: retrieved {len(batch_tracks)} tracks (total so far: {len(tracks)})"
+            f"📄 Batch complete: read {len(rows)} rows (total so far: {len(tracks)})"
         )
 
         if ctx is not None:
             await ctx.report_progress(progress=len(tracks), total=total)
             await ctx.info(f"Fetched {len(tracks)} tracks so far")
 
-        # Update remaining count if we have a limit
-        if remaining:
-            remaining -= len(batch_tracks)
+        # `limit`/`offset` count playlist positions, so consume the rows the API
+        # returned - never the subset we managed to parse. Counting parsed
+        # tracks lets an unparseable page hold `remaining` at its starting value
+        # and page through the entire playlist regardless of `limit`.
+        current_offset += len(rows)
+        if remaining is not None:
+            remaining -= len(rows)
             if remaining <= 0:
                 break
 
         # Check if we've reached the end
-        if len(tracks_result["items"]) < batch_limit or not tracks_result.get("next"):
+        if len(rows) < batch_limit or not (tracks_result or {}).get("next"):
             break
-
-        current_offset += len(tracks_result["items"])
 
         # Safety check to prevent infinite loops
         if current_offset > 10000:
@@ -305,6 +345,11 @@ async def get_playlist_tracks_paginated(
             )
             break
 
+    if unavailable:
+        logger.warning(
+            f"⚠️ {unavailable} playlist entries had no track object and were "
+            f"returned as placeholders"
+        )
     logger.info(f"📄 Pagination complete: total {len(tracks)} tracks retrieved")
     return tracks
 
