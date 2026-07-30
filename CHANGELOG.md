@@ -4,6 +4,40 @@
 - new `reorder_playlist_tracks` tool: move a contiguous block of tracks to a new
   position within a playlist (zero-based positions, optional snapshot guard)
 
+### Ported from spotify-mcp-cloudflare
+Changes brought over from the sibling remote server, which is now linked from the
+README as the hosted alternative.
+
+**Breaking:** `playback_control` is split into `get_playback_state` (read-only, so
+it no longer lies in its annotations) and `control_playback`, and `search_tracks`
+is renamed `search_music` since it always searched more than tracks.
+
+- new tools: `get_me`, `list_devices`, `transfer_playback`, `save_tracks`,
+  `remove_saved_tracks`, `unfollow_playlist`, `get_recently_played`,
+  `get_top_items`
+- `control_playback` gains seek, volume, shuffle, repeat, `context_uri` and
+  `device_id` — none of which were reachable before
+- `get_top_items` + `get_recently_played` are the measured replacement for the
+  withdrawn `/recommendations` endpoint, with a `discover_similar` prompt as the
+  stopgap and a `taste_profile` prompt alongside it
+- Feb 2026 regime fallback: playlist and library writes try the restricted
+  endpoint shape and fall back to the legacy one per family, so the server keeps
+  working whichever regime Spotify serves the app
+- errors keep Spotify's machine-readable `reason` and key `NO_ACTIVE_DEVICE` /
+  `PREMIUM_REQUIRED` / `QUOTA_EXCEEDED` off it rather than off prose; rate limits
+  surface `Retry-After`
+- 429s are no longer retried — quota is counted per developer account since July
+  2026, so a retry burns the pool for every app on the account
+- server-level `instructions`, website URL and icon: whole-surface guidance ships
+  once per session instead of once per tool
+- `modify_playlist_details` and `reorder_playlist_tracks` are now marked
+  `destructiveHint` (they overwrite existing state)
+- `tests/test_tool_metadata.py` fails if a tool ships without a title, icon or
+  behaviour annotations, or if the README tool table drifts from the code
+- new `/spotify-api-watch` skill and `scripts/spotify_api_watch.py`, which probe
+  Spotify's changelog month-space (there is no feed or index) for unreviewed
+  entries
+
 ## 2026-05-29 — 0.3.1
 - add the `mcp-name:` ownership marker to the README so the MCP Registry can
   verify the PyPI package (0.3.0 published to PyPI but failed registry validation)

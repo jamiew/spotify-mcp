@@ -619,12 +619,28 @@
             <div class="tool-group" data-reveal>
                 <div class="label">Playback &amp; queue</div>
                 <div class="tool-list">
-                    <div class="tool"><code>playback_control</code><span>Get state, start, pause, and skip tracks</span></div>
+                    <div class="tool"><code>get_playback_state</code><span>What's playing now, on which device</span></div>
+                    <div class="tool"><code>control_playback</code><span>Play, pause, skip, seek, volume, shuffle, repeat</span></div>
+                    <div class="tool"><code>list_devices</code><span>See every device you can play on</span></div>
+                    <div class="tool"><code>transfer_playback</code><span>Move playback to another device</span></div>
                     <div class="tool"><code>add_to_queue</code><span>Queue up tracks for the active device</span></div>
                     <div class="tool"><code>get_queue</code><span>View the current playback queue</span></div>
                     <div class="tool"><code>get_track_info</code><span>Detailed metadata for any track</span></div>
                     <div class="tool"><code>get_artist_info</code><span>Artist details and top tracks</span></div>
-                    <div class="tool"><code>search_tracks</code><span>Search tracks, albums, artists, or playlists</span></div>
+                    <div class="tool"><code>get_album_info</code><span>Album details and its track list</span></div>
+                    <div class="tool"><code>search_music</code><span>Search tracks, albums, artists, or playlists</span></div>
+                </div>
+            </div>
+
+            <div class="tool-group" data-reveal>
+                <div class="label">Library &amp; listening history</div>
+                <div class="tool-list">
+                    <div class="tool"><code>get_me</code><span>Your Spotify profile</span></div>
+                    <div class="tool"><code>get_saved_tracks</code><span>Your Liked Songs, paginated</span></div>
+                    <div class="tool"><code>save_tracks</code><span>Like tracks in bulk</span></div>
+                    <div class="tool"><code>remove_saved_tracks</code><span>Unlike tracks in bulk</span></div>
+                    <div class="tool"><code>get_top_items</code><span>Your top artists or tracks over any time range</span></div>
+                    <div class="tool"><code>get_recently_played</code><span>What you played lately, with timestamps</span></div>
                 </div>
             </div>
 
@@ -639,6 +655,7 @@
                     <div class="tool"><code>remove_tracks_from_playlist</code><span>Batch-remove tracks from a playlist</span></div>
                     <div class="tool"><code>modify_playlist_details</code><span>Update name, description, and privacy</span></div>
                     <div class="tool"><code>reorder_playlist_tracks</code><span>Move tracks to a new position within a playlist</span></div>
+                    <div class="tool"><code>unfollow_playlist</code><span>Remove a playlist from your library</span></div>
                 </div>
             </div>
         </section>
@@ -799,6 +816,7 @@
                 <div class="footer-links">
                     <a href="https://github.com/jamiew/spotify-mcp" target="_blank" rel="noopener">GitHub repository</a>
                     <a href="https://github.com/jamiew/spotify-mcp#installation" target="_blank" rel="noopener">Installation guide</a>
+                    <a href="https://github.com/jamiew/spotify-mcp-cloudflare" target="_blank" rel="noopener">Remote version on Cloudflare</a>
                     <a href="https://github.com/varunneal/spotify-mcp" target="_blank" rel="noopener">Original by varunneal</a>
                     <a href="https://github.com/jamiew/spotify-mcp/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
                 </div>

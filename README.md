@@ -4,6 +4,12 @@ mcp-name: io.github.jamiew/spotify-mcp
 
 MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](https://github.com/varunneal/spotify-mcp) adds smart-batching tools and advanced playlist features that optimize API usage.
 
+This one runs locally over stdio. If you want a **remote** MCP server instead — hosted, OAuth in the
+browser, no local install for the people connecting to it — see
+[jamiew/spotify-mcp-cloudflare](https://github.com/jamiew/spotify-mcp-cloudflare): a sibling Spotify
+MCP on Cloudflare Workers that you can deploy yourself in a few minutes, and a decent worked example
+of remote-MCP auth on Workers generally.
+
 ## Features
 
 ### Core Functionality
@@ -13,6 +19,7 @@ MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](
 - **Resources**: Read user, playback, track, playlist, artist, and album state by URI
 
 ### Modern MCP Protocol
+- **Server instructions**: whole-surface guidance ships once per session instead of per tool
 - **Structured output**: every tool returns a typed schema, not a bare dict
 - **Tool annotations & icons**: read-only/destructive hints, titles, and a Spotify glyph
 - **Progress notifications**: live updates while paginating large playlists
@@ -23,6 +30,38 @@ MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](
 - **Large Playlist Support**: Efficiently handle playlists with 1000+ tracks using pagination
 - **Advanced Playlist Management**: Create, modify details, reorder tracks, bulk track operations
 - **API-Optimized Workflows**: Intelligent batching reduces API calls by 60-80%
+
+### Tools
+| Tool | Does |
+| --- | --- |
+| `get_me` | The signed-in user's profile |
+| `search_music` | Search tracks, albums, artists or playlists, with filters |
+| `get_track_info` | Track details, batched up to 50 per call |
+| `get_artist_info` | Artist details plus their top tracks |
+| `get_album_info` | Album details plus its track list |
+| `get_playback_state` | What's playing now: track, device, progress, shuffle, repeat |
+| `control_playback` | Play, pause, next, previous, seek, volume, shuffle, repeat |
+| `list_devices` | Available Spotify Connect devices |
+| `transfer_playback` | Move playback to another device |
+| `get_queue` | Now playing plus the upcoming queue |
+| `add_to_queue` | Queue a track |
+| `get_user_playlists` | The user's playlists, paginated |
+| `get_playlist_info` | Playlist metadata without its tracks |
+| `get_playlist_tracks` | Playlist tracks, paginated to any size |
+| `create_playlist` | Create a playlist |
+| `modify_playlist_details` | Rename a playlist or change its description/visibility |
+| `add_tracks_to_playlist` | Add up to 100 tracks in one call |
+| `remove_tracks_from_playlist` | Remove tracks (confirms first where the client supports it) |
+| `reorder_playlist_tracks` | Move a block of tracks to a new position |
+| `unfollow_playlist` | Unfollow a playlist — how Spotify deletes your own |
+| `get_saved_tracks` | Liked Songs, paginated |
+| `save_tracks` | Like tracks |
+| `remove_saved_tracks` | Unlike tracks |
+| `get_top_items` | Top artists or tracks over a time range |
+| `get_recently_played` | Recently played tracks with timestamps |
+
+`tests/test_tool_metadata.py` fails if this table drifts from the code, or if a tool ships
+without a title, icon and behaviour annotations.
 
 ## Installation
 
