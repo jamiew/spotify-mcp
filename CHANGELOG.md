@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026-07-30 — 0.4.0
 - new `reorder_playlist_tracks` tool: move a contiguous block of tracks to a new
   position within a playlist (zero-based positions, optional snapshot guard)
 
@@ -37,6 +37,10 @@ is renamed `search_music` since it always searched more than tracks.
 - new `/spotify-api-watch` skill and `scripts/spotify_api_watch.py`, which probe
   Spotify's changelog month-space (there is no feed or index) for unreviewed
   entries
+
+### CI housekeeping
+- GitHub Actions bumped to their latest majors, `setup-uv` pinned to v8.1.0
+- removed the Claude GitHub Actions workflows we weren't using
 
 ## 2026-05-29 — 0.3.1
 - add the `mcp-name:` ownership marker to the README so the MCP Registry can
