@@ -61,6 +61,20 @@ class TestConsistencyWithPyproject:
         assert "spotify-mcp-jamiew" in pyproject["project"]["scripts"]
 
 
+class TestDependencyBounds:
+    """`uv.lock` pins what *we* run; published users get a fresh resolve, so an
+    open upper bound is only ever caught after the release. mcp 2.0 dropped
+    `mcp.server.fastmcp` and broke every fresh `uvx` install of 0.3.1/0.4.0."""
+
+    def test_runtime_deps_declare_an_upper_bound(self, pyproject: dict) -> None:
+        unbounded = [
+            dep
+            for dep in pyproject["project"]["dependencies"]
+            if "<" not in dep and "==" not in dep and "~=" not in dep
+        ]
+        assert unbounded == []
+
+
 class TestEnvVarsMatchCode:
     def test_server_json_declares_exactly_the_vars_the_code_reads(
         self, server_json: dict

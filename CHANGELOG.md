@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-07-30 — 0.4.1
+- cap the runtime dependencies below their next major. `mcp` 2.0 removed
+  `mcp.server.fastmcp`, which this server is built on, so the open `>=1.27.1`
+  bound meant every fresh `uvx` install resolved 2.x and died on import —
+  `uv.lock` pins what we run locally, so CI never saw it (affected 0.3.1 and
+  0.4.0)
+- new packaging test fails if a runtime dependency has no upper bound
+
 ## 2026-07-30 — 0.4.0
 - new `reorder_playlist_tracks` tool: move a contiguous block of tracks to a new
   position within a playlist (zero-based positions, optional snapshot guard)

@@ -1,15 +1,17 @@
 [project]
 name = "spotify-mcp-jamiew"
-version = "0.4.0"
+version = "0.4.1"
 description = "MCP server connecting LLMs to Spotify, with smart-batching and large-playlist tools"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 keywords = ["mcp", "spotify", "model-context-protocol", "claude", "llm"]
 dependencies = [
- "mcp[cli]>=1.27.1",
- "python-dotenv>=1.2.2",
- "spotipy>=2.26.0",
+ # mcp 2.0 removed mcp.server.fastmcp, which this server is built on — an open
+ # upper bound means a fresh `uvx` install resolves 2.x and dies on import
+ "mcp[cli]>=1.27.1,<2",
+ "python-dotenv>=1.2.2,<2",
+ "spotipy>=2.26.0,<3",
 ]
 [[project.authors]]
 name = "Jamie Dubs"
