@@ -1,6 +1,6 @@
 """Tests for utility functions."""
 
-from spotify_mcp.utils import normalize_redirect_uri
+from spotify_mcp.utils import normalize_redirect_uri, to_id, to_uri
 
 
 class TestNormalizeRedirectUri:
@@ -33,3 +33,22 @@ class TestNormalizeRedirectUri:
         # "localhostess.com" must not be treated as localhost
         url = "http://localhostess.com/callback"
         assert normalize_redirect_uri(url) == url
+
+
+class TestToId:
+    def test_bare_id_passes_through(self):
+        assert to_id("4iV5W9uYEdYUVa79Axb7Rh") == "4iV5W9uYEdYUVa79Axb7Rh"
+
+    def test_strips_uri_prefix(self):
+        assert to_id("spotify:track:abc123") == "abc123"
+
+    def test_strips_open_url_and_query(self):
+        assert to_id("https://open.spotify.com/playlist/xyz?si=abcd") == "xyz"
+
+
+class TestToUri:
+    def test_builds_from_bare_id(self):
+        assert to_uri("track", "abc") == "spotify:track:abc"
+
+    def test_is_idempotent_on_a_uri(self):
+        assert to_uri("track", "spotify:track:abc") == "spotify:track:abc"

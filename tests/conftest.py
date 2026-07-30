@@ -6,6 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from spotify_mcp import spotify_api
+
+
+@pytest.fixture(autouse=True)
+def reset_regime_cache():
+    """`with_fallback` caches the resolved regime per family for the life of the
+    process, so without this one test's fallback pins every later one."""
+    spotify_api._legacy_families.clear()
+    yield
+    spotify_api._legacy_families.clear()
+
+
 # Sample Spotify API response data for testing
 SAMPLE_TRACK = {
     "id": "4iV5W9uYEdYUVa79Axb7Rh",
