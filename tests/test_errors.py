@@ -7,6 +7,7 @@ from spotipy import SpotifyException
 from spotify_mcp.errors import (
     SpotifyMCPError,
     SpotifyMCPErrorCode,
+    _format_error,
     convert_spotify_error,
 )
 
@@ -183,3 +184,50 @@ class TestSpotifyMCPError:
         assert error.code == SpotifyMCPErrorCode.PLAYLIST_NOT_FOUND
         assert "playlist" in error.message.lower()
         assert error.details["http_status"] == 404
+
+
+class TestSpotifyReasonIsPreserved:
+    """Dropping Spotify's machine-readable `reason` is what makes upstream
+    changes undiagnosable from a tool failure — see the CLAUDE.md note."""
+
+    def test_reason_lands_in_details_and_message(self):
+        exc = SpotifyException(403, -1, "Forbidden", reason="UNKNOWN")
+
+        error = SpotifyMCPError.from_spotify_exception(exc)
+
+        assert error.details["reason"] == "UNKNOWN"
+        assert "UNKNOWN" in _format_error(error)
+
+    def test_no_active_device_is_keyed_off_reason_not_prose(self):
+        # The message says nothing about devices; only `reason` does.
+        exc = SpotifyException(
+            404, -1, "Player command failed", reason="NO_ACTIVE_DEVICE"
+        )
+
+        error = SpotifyMCPError.from_spotify_exception(exc)
+
+        assert error.code is SpotifyMCPErrorCode.NO_ACTIVE_DEVICE
+        assert "transfer_playback" in (error.suggestion or "")
+
+    def test_premium_required_is_keyed_off_reason(self):
+        exc = SpotifyException(403, -1, "Forbidden", reason="PREMIUM_REQUIRED")
+
+        error = SpotifyMCPError.from_spotify_exception(exc)
+
+        assert error.code is SpotifyMCPErrorCode.PREMIUM_REQUIRED
+
+    def test_quota_exceeded_tells_you_not_to_retry(self):
+        exc = SpotifyException(429, -1, "Too many requests", reason="QUOTA_EXCEEDED")
+
+        error = SpotifyMCPError.from_spotify_exception(exc)
+
+        assert error.code is SpotifyMCPErrorCode.API_QUOTA_EXCEEDED
+        assert "don't retry" in (error.suggestion or "")
+
+    def test_plain_rate_limit_surfaces_retry_after(self):
+        exc = SpotifyException(429, -1, "rate limited", headers={"Retry-After": "7"})
+
+        error = SpotifyMCPError.from_spotify_exception(exc)
+
+        assert error.code is SpotifyMCPErrorCode.API_RATE_LIMITED
+        assert "7" in (error.suggestion or "")
