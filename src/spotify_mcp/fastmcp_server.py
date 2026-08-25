@@ -615,7 +615,10 @@ def search_music(
     Args:
         query: Search query
         qtype: Type ('track', 'album', 'artist', 'playlist')
-        limit: Max results per page (1-50, default 10)
+        limit: Max results per page (1-50, default 10). Spotify caps search at 10
+            per page for restricted apps and rejects anything larger; a larger
+            limit is retried at the cap rather than failing. Check the returned
+            `limit` for what was actually served, and use `offset` to go deeper.
         offset: Number of results to skip for pagination (default 0)
         year: Filter by year (e.g., '2024')
         year_range: Filter by year range (e.g., '2020-2024')
@@ -630,7 +633,7 @@ def search_music(
     Example: query='love', year='2024', genre='pop' searches for 'love year:2024 genre:pop'
     """
     try:
-        limit = max(1, min(50, limit))
+        limit = max(1, min(spotify_api.SEARCH_LIMIT_MAX, limit))
 
         # Build filtered query
         filters = []
@@ -650,8 +653,8 @@ def search_music(
         logger.info(
             f"🔍 Searching {qtype}s: '{full_query}' (limit={limit}, offset={offset})"
         )
-        result = spotify_client.search(
-            q=full_query, type=qtype, limit=limit, offset=offset
+        result = spotify_api.search(
+            spotify_client, full_query, qtype=qtype, limit=limit, offset=offset
         )
 
         tracks = []

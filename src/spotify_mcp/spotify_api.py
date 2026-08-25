@@ -273,3 +273,48 @@ def remove_saved_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> None:
         ),
         lambda: sp.current_user_saved_tracks_delete(tracks=ids),
     )
+
+
+# Search page size is regime-dependent: legacy apps get 50, restricted apps get
+# 10 and answer 400 "Invalid limit" for anything above it. Which one we are is
+# not introspectable, so discover the ceiling on the first rejection and reuse it
+# for the life of the process, the same way `with_fallback` caches a family.
+_RESTRICTED_SEARCH_LIMIT = 10
+SEARCH_LIMIT_MAX = 50
+_search_limit_max: int = SEARCH_LIMIT_MAX
+
+
+def search_limit_ceiling() -> int:
+    """The largest search `limit` known to be accepted for this app."""
+    return _search_limit_max
+
+
+def search(
+    sp: spotipy.Spotify, query: str, *, qtype: str, limit: int, offset: int
+) -> dict:
+    """Search, retrying at the restricted page size if the limit is rejected."""
+    global _search_limit_max
+
+    capped = min(limit, _search_limit_max)
+    try:
+        result: dict = sp.search(q=query, type=qtype, limit=capped, offset=offset)
+        return result
+    except SpotifyException as e:
+        # Only a limit that is too large earns a retry. A 400 for a malformed
+        # query must still surface.
+        too_large = capped > _RESTRICTED_SEARCH_LIMIT
+        if (
+            e.http_status != 400
+            or "limit" not in (e.msg or "").lower()
+            or not too_large
+        ):
+            raise
+        _search_limit_max = _RESTRICTED_SEARCH_LIMIT
+        logging.getLogger(__name__).info(
+            f"Spotify rejected search limit {capped}; "
+            f"this app caps search at {_RESTRICTED_SEARCH_LIMIT} results per page"
+        )
+        retried: dict = sp.search(
+            q=query, type=qtype, limit=_RESTRICTED_SEARCH_LIMIT, offset=offset
+        )
+        return retried
