@@ -369,6 +369,33 @@ class TestGetArtistInfo:
         with pytest.raises(ValueError):
             get_artist_info("badid")
 
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_withheld_top_tracks_still_returns_artist(
+        self, mock_spotify_api, sample_artist_data, status
+    ):
+        """Restricted apps get 403 from /top-tracks; the artist must still come back."""
+        mock_spotify_api.artist.return_value = sample_artist_data
+        mock_spotify_api.artist_top_tracks.side_effect = SpotifyException(
+            status, -1, "Forbidden"
+        )
+
+        result = get_artist_info("0gxyHStUsqpMadRV0Di1Qt")
+
+        assert result.artist.name == "Rick Astley"
+        assert result.top_tracks == []
+
+    def test_other_top_tracks_errors_still_raise(
+        self, mock_spotify_api, sample_artist_data
+    ):
+        """A 500 is not a permissions boundary and must not be swallowed."""
+        mock_spotify_api.artist.return_value = sample_artist_data
+        mock_spotify_api.artist_top_tracks.side_effect = SpotifyException(
+            500, -1, "Server Error"
+        )
+
+        with pytest.raises(ValueError):
+            get_artist_info("0gxyHStUsqpMadRV0Di1Qt")
+
 
 class TestGetPlaylistInfo:
     def test_success(self, mock_spotify_api, sample_playlist_data):
