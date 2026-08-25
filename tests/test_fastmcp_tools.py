@@ -382,6 +382,19 @@ class TestGetPlaylistInfo:
             "37i9dQZF1DX0XUsuxWHRQd",
             fields="id,name,description,owner,public,tracks.total",
         )
+        # a reported count is trusted, so no extra lookup is made
+        mock_spotify_api._get.assert_not_called()
+
+    def test_falls_back_to_the_items_endpoint_for_a_stripped_count(
+        self, mock_spotify_api, sample_playlist_data
+    ):
+        """Restricted apps get `tracks.total` stripped; total_tracks must still fill."""
+        mock_spotify_api.playlist.return_value = {**sample_playlist_data, "tracks": {}}
+        mock_spotify_api._get.return_value = {"items": [], "total": 65}
+
+        result = get_playlist_info("37i9dQZF1DX0XUsuxWHRQd")
+
+        assert result.total_tracks == 65
 
     def test_spotify_error(self, mock_spotify_api):
         mock_spotify_api.playlist.side_effect = SPOTIFY_ERROR
@@ -855,6 +868,16 @@ class TestResources:
         result = json.loads(playlist_resource("pl1"))
 
         assert result["name"] == "RapCaviar"
+
+    def test_playlist_resource_fills_a_stripped_count(
+        self, mock_spotify_api, sample_playlist_data
+    ):
+        mock_spotify_api.playlist.return_value = {**sample_playlist_data, "tracks": {}}
+        mock_spotify_api._get.return_value = {"items": [], "total": 65}
+
+        result = json.loads(playlist_resource("pl1"))
+
+        assert result["total_tracks"] == 65
 
     def test_artist_resource(self, mock_spotify_api, sample_artist_data):
         mock_spotify_api.artist.return_value = sample_artist_data

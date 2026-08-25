@@ -830,6 +830,13 @@ def get_artist_info(artist_id: str) -> ArtistInfo:
         raise convert_spotify_error(e) from e
 
 
+def _total_tracks(playlist_id: str, reported: object) -> int | None:
+    """Prefer the count Spotify reported, else read it off the items endpoint."""
+    if isinstance(reported, int):
+        return reported
+    return spotify_api.playlist_total(spotify_client, playlist_id)
+
+
 @mcp.tool(
     title="Get Playlist Info",
     annotations=ToolAnnotations(
@@ -864,7 +871,7 @@ def get_playlist_info(playlist_id: str) -> Playlist:
             owner=owner.get("display_name"),
             description=result.get("description"),
             tracks=None,  # No tracks - use get_playlist_tracks
-            total_tracks=tracks.get("total"),
+            total_tracks=_total_tracks(playlist_id, tracks.get("total")),
             public=result.get("public"),
         )
 
@@ -1607,7 +1614,7 @@ def playlist_resource(playlist_id: str) -> str:
             id=result["id"],
             owner=owner.get("display_name"),
             description=result.get("description"),
-            total_tracks=tracks.get("total"),
+            total_tracks=_total_tracks(playlist_id, tracks.get("total")),
             public=result.get("public"),
         ).model_dump_json()
     except Exception as e:
