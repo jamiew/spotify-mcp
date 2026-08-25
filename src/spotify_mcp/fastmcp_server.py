@@ -770,7 +770,10 @@ def get_track_info(track_ids: str | list[str]) -> TrackList:
         TrackList with 'tracks' containing track metadata including release_date.
         For single ID, returns {'tracks': [track]}.
 
-    Note: Batch lookup is much more efficient - 50 tracks = 1 API call instead of 50.
+    Note: Batch lookup is much more efficient where it is available - 50 tracks
+    in 1 API call instead of 50. Spotify withholds the batch endpoint from some
+    apps, in which case this transparently falls back to one request per track,
+    so the result is the same either way.
     """
     try:
         # Normalize to list
@@ -781,12 +784,11 @@ def get_track_info(track_ids: str | list[str]) -> TrackList:
 
         logger.info(f"🎵 Getting track info for {len(ids)} track(s)")
 
-        if len(ids) == 1:
-            result = spotify_client.track(ids[0])
-            tracks = [parse_track(result)]
-        else:
-            result = spotify_client.tracks(ids)
-            tracks = [parse_track(item) for item in result.get("tracks", []) if item]
+        tracks = [
+            parse_track(cast("TrackObject", item))
+            for item in spotify_api.get_tracks(spotify_client, ids)
+            if item
+        ]
 
         return TrackList(tracks=tracks)
     except SpotifyException as e:
