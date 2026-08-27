@@ -154,6 +154,116 @@ class TestControlPlayback:
             control_playback("teleport")
 
 
+class TestControlPlaybackReadBack:
+    """Spotify applies player changes asynchronously, so the state is read back until
+    it reflects the action. These drive the stale-then-fresh sequence a single
+    immediate read would have returned wrongly."""
+
+    TRACK = {
+        "name": "Never Gonna Give You Up",
+        "artists": [{"name": "Rick Astley", "id": "0gxyHStUsqpMadRV0Di1Qt"}],
+        "album": {"name": "Whenever You Need Somebody", "id": "6XzKGcM6laRkTrME3rQvJw"},
+        "duration_ms": 213573,
+    }
+
+    def _playing(self, track_id="4iV5W9uYEdYUVa79Axb7Rh", **over):
+        state = {
+            "is_playing": True,
+            "item": {**self.TRACK, "id": track_id},
+            "device": {"name": "My iPhone", "volume_percent": 70},
+            "shuffle_state": False,
+            "repeat_state": "off",
+            "progress_ms": 1000,
+        }
+        state.update(over)
+        return state
+
+    def test_play_waits_out_an_idle_device(self, mock_spotify_api):
+        """A waking device answers None, which reads back as an empty, not-playing
+        state. The old code returned that."""
+        mock_spotify_api.current_playback.side_effect = [
+            None,
+            None,
+            self._playing(),
+        ]
+
+        result = control_playback("play")
+
+        assert result.is_playing is True
+        assert result.track is not None
+        assert result.track.id == "4iV5W9uYEdYUVa79Axb7Rh"
+
+    def test_play_waits_past_the_pre_action_state(self, mock_spotify_api):
+        mock_spotify_api.current_playback.side_effect = [
+            self._playing(is_playing=False),
+            self._playing(),
+        ]
+
+        assert control_playback("play").is_playing is True
+
+    def test_pause_waits_for_playback_to_stop(self, mock_spotify_api):
+        mock_spotify_api.current_playback.side_effect = [
+            self._playing(),
+            self._playing(is_playing=False),
+        ]
+
+        assert control_playback("pause").is_playing is False
+
+    def test_next_waits_for_the_track_to_change(self, mock_spotify_api):
+        mock_spotify_api.current_playback.side_effect = [
+            self._playing(track_id="old"),  # pre-action read
+            self._playing(track_id="old"),  # still stale
+            self._playing(track_id="new"),
+        ]
+
+        result = control_playback("next")
+
+        assert result.track is not None
+        assert result.track.id == "new"
+
+    def test_shuffle_waits_for_the_flag(self, mock_spotify_api):
+        mock_spotify_api.current_playback.side_effect = [
+            self._playing(shuffle_state=False),
+            self._playing(shuffle_state=True),
+        ]
+
+        assert control_playback("shuffle", state="on").shuffle is True
+
+    def test_volume_waits_for_the_level(self, mock_spotify_api):
+        mock_spotify_api.current_playback.side_effect = [
+            self._playing(device={"name": "My iPhone", "volume_percent": 70}),
+            self._playing(device={"name": "My iPhone", "volume_percent": 30}),
+        ]
+
+        assert control_playback("volume", volume_percent=30).volume == 30
+
+    def test_seek_rejects_a_stale_position(self, mock_spotify_api):
+        mock_spotify_api.current_playback.side_effect = [
+            self._playing(progress_ms=1000),
+            self._playing(progress_ms=42120),
+        ]
+
+        assert control_playback("seek", position_ms=42000).progress_ms == 42120
+
+    def test_gives_up_rather_than_hanging(self, mock_spotify_api):
+        """A device that never reports the change must not block or raise — the last
+        state read is returned, matching the old behaviour."""
+        mock_spotify_api.current_playback.return_value = self._playing(is_playing=False)
+
+        result = control_playback("play")
+
+        assert result.is_playing is False
+        assert mock_spotify_api.current_playback.call_count == 5
+
+    def test_no_extra_reads_when_already_confirmed(self, mock_spotify_api):
+        """The happy path must stay a single read."""
+        mock_spotify_api.current_playback.return_value = self._playing()
+
+        control_playback("play")
+
+        assert mock_spotify_api.current_playback.call_count == 1
+
+
 class TestListDevices:
     def test_lists_devices(self, mock_spotify_api):
         mock_spotify_api.devices.return_value = {
