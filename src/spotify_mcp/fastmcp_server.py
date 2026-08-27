@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, cast
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -28,6 +29,8 @@ from spotify_mcp.logging_utils import (
 from spotify_mcp.utils import to_id, to_uri
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from spotify_mcp.spotify_types import (
         AlbumObject,
         AlbumRef,
@@ -416,6 +419,70 @@ def get_me() -> UserProfile:
         raise convert_spotify_error(e) from e
 
 
+# Spotify's player writes are asynchronous: /me/player/play and friends answer 204
+# immediately, but a GET straight afterwards can still serve the pre-action state, or
+# None while an idle device wakes up (which reads back as is_playing=False with every
+# field empty). So confirm the action landed instead of trusting one immediate read.
+_CONFIRM_ATTEMPTS = 5
+_CONFIRM_DELAY_S = 0.2
+
+
+def _playback_confirmed(
+    action: str,
+    *,
+    previous_track_id: str | None = None,
+    position_ms: int | None = None,
+    volume_percent: int | None = None,
+    state: str | None = None,
+) -> Callable[[PlaybackState], bool]:
+    """Build the test for "this action has taken effect" for a given action.
+
+    Anything without a meaningful test accepts the first read, preserving the old
+    behaviour rather than spending attempts on a condition that can never be met.
+    """
+    if action == "play":
+        # Only playing/not-playing is reliable here: with shuffle on, a context does
+        # not necessarily start on its first track, so the track cannot be predicted.
+        return lambda s: s.is_playing
+    if action == "pause":
+        return lambda s: not s.is_playing
+    if action in ("next", "previous"):
+        # A fresh track id, or any track at all if nothing was playing before.
+        return lambda s: s.track is not None and s.track.id != previous_track_id
+    if action == "volume":
+        return lambda s: s.volume == volume_percent
+    if action == "shuffle":
+        return lambda s: s.shuffle is (state == "on")
+    if action == "repeat":
+        return lambda s: s.repeat == state
+    if action == "seek" and position_ms is not None:
+        # Playback keeps advancing, so accept a window ahead of the target rather
+        # than an exact match, and reject a stale position from before the seek.
+        return lambda s: (
+            s.progress_ms is not None
+            and position_ms - 500 <= s.progress_ms <= position_ms + 5000
+        )
+    return lambda _s: True
+
+
+def _await_playback(
+    matches: Callable[[PlaybackState], bool],
+) -> PlaybackState:
+    """Read playback state until `matches` holds, then return it.
+
+    Returns the last state read once the attempts are exhausted, so a device that
+    genuinely never reaches the expected state degrades to the old behaviour rather
+    than raising or blocking.
+    """
+    state = _playback_state()
+    for _ in range(_CONFIRM_ATTEMPTS - 1):
+        if matches(state):
+            return state
+        time.sleep(_CONFIRM_DELAY_S)
+        state = _playback_state()
+    return state
+
+
 def _playback_state() -> PlaybackState:
     """Read the current playback state into our model."""
     result = spotify_client.current_playback()
@@ -484,10 +551,21 @@ def control_playback(
         device_id: Target device (default: the currently active one)
 
     Returns:
-        PlaybackState after the action
+        PlaybackState after the action has been confirmed to have taken effect.
+
+    Note: Spotify applies player changes asynchronously, so the state is read back
+    until it reflects the action rather than once immediately.
     """
     try:
         logger.info(f"🎵 Playback action '{action}' (device={device_id or 'active'})")
+
+        # `next`/`previous` are confirmed by the track changing, so the outgoing
+        # track has to be known before the action is issued.
+        previous_track_id: str | None = None
+        if action in ("next", "previous"):
+            before = _playback_state()
+            previous_track_id = before.track.id if before.track else None
+
         if action == "play":
             if context_uri:
                 spotify_client.start_playback(
@@ -526,7 +604,15 @@ def control_playback(
         else:
             raise ValueError(f"Invalid action: {action}")
 
-        return _playback_state()
+        return _await_playback(
+            _playback_confirmed(
+                action,
+                previous_track_id=previous_track_id,
+                position_ms=position_ms,
+                volume_percent=volume_percent,
+                state=state,
+            )
+        )
 
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
