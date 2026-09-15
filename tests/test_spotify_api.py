@@ -1,9 +1,11 @@
 """Tests for Spotify API client."""
 
+import json
 import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 import spotipy
 from spotipy import SpotifyException
 from spotipy.exceptions import SpotifyOauthError
@@ -157,10 +159,28 @@ class TestWithFallback:
 
 
 class TestSearchLimitCeiling:
-    """Restricted apps cap search at 10 per page and 400 above it. No fake
-    upstream reports that cap, so it is asserted against a real rejection."""
+    """Exercise search fallback through Spotipy's real HTTP error translation."""
 
-    INVALID_LIMIT = SpotifyException(400, -1, "Invalid limit, reason: None")
+    INVALID_LIMIT = {"error": {"message": "Invalid limit"}}
+
+    def _client(self, *responses):
+        pending = iter(responses)
+        session = requests.Session()
+
+        def respond(method, url, **kwargs):
+            status, payload = next(pending)
+            response = requests.Response()
+            response.status_code = status
+            response.url = (
+                requests.Request(method, url, params=kwargs["params"]).prepare().url
+            )
+            response._content = json.dumps(payload).encode()
+            return response
+
+        session.request = MagicMock(side_effect=respond)
+        return spotipy.Spotify(
+            auth="test-token", requests_session=session
+        ), session.request
 
     @pytest.fixture(autouse=True)
     def _reset_ceiling(self):
@@ -168,51 +188,80 @@ class TestSearchLimitCeiling:
         yield
         spotify_api._search_limit_max = spotify_api.SEARCH_LIMIT_MAX
 
-    def test_passes_the_requested_limit_through_when_accepted(self):
-        sp = MagicMock()
-        sp.search.return_value = {"tracks": {"items": []}}
+    def test_remembers_the_cap_only_after_a_successful_retry(self):
+        first_page = {"tracks": {"items": [], "limit": 10, "offset": 30, "total": 100}}
+        next_page = {"tracks": {"items": [], "limit": 10, "offset": 40, "total": 100}}
+        sp, request = self._client(
+            (400, self.INVALID_LIMIT), (200, first_page), (200, next_page)
+        )
 
-        spotify_api.search(sp, "trance", qtype="track", limit=50, offset=0)
-
-        sp.search.assert_called_once_with(q="trance", type="track", limit=50, offset=0)
-
-    def test_retries_at_the_restricted_cap(self):
-        sp = MagicMock()
-        sp.search.side_effect = [self.INVALID_LIMIT, {"tracks": {"items": []}}]
-
-        result = spotify_api.search(sp, "trance", qtype="track", limit=20, offset=0)
-
-        assert result == {"tracks": {"items": []}}
-        assert [c.kwargs["limit"] for c in sp.search.call_args_list] == [20, 10]
-
-    def test_remembers_the_cap_for_later_calls(self):
-        sp = MagicMock()
-        sp.search.side_effect = [self.INVALID_LIMIT, {"a": 1}, {"a": 2}]
-
-        spotify_api.search(sp, "trance", qtype="track", limit=20, offset=0)
-        spotify_api.search(sp, "goa", qtype="track", limit=50, offset=0)
-
-        # the oversized limit is not attempted a second time
-        assert [c.kwargs["limit"] for c in sp.search.call_args_list] == [20, 10, 10]
-        assert spotify_api.search_limit_ceiling() == 10
+        result = spotify_api.search(sp, "trance", qtype="track", limit=20, offset=30)
+        assert result == first_page
+        result = spotify_api.search(sp, "goa", qtype="track", limit=50, offset=40)
+        assert result == next_page
+        assert [
+            (c.kwargs["params"]["limit"], c.kwargs["params"]["offset"])
+            for c in request.call_args_list
+        ] == [(20, 30), (10, 30), (10, 40)]
 
     def test_a_limit_already_at_the_cap_is_not_retried(self):
-        sp = MagicMock()
-        sp.search.side_effect = self.INVALID_LIMIT
+        sp, request = self._client((400, self.INVALID_LIMIT))
 
-        with pytest.raises(SpotifyException):
+        with pytest.raises(SpotifyException) as caught:
             spotify_api.search(sp, "trance", qtype="track", limit=10, offset=0)
 
-        assert sp.search.call_count == 1
+        assert caught.value.http_status == 400
+        assert caught.value.msg.endswith("\n Invalid limit")
+        assert request.call_count == 1
 
-    def test_an_unrelated_400_is_not_retried(self):
-        sp = MagicMock()
-        sp.search.side_effect = SpotifyException(400, -1, "Invalid query")
+    @pytest.mark.parametrize(
+        ("status", "message"),
+        [
+            (400, "Invalid query"),
+            (400, "Query exceeds limit"),
+            (401, "Invalid limit"),
+            (403, "Invalid limit"),
+            (429, "Invalid limit"),
+            (500, "Invalid limit"),
+            (503, "Invalid limit"),
+        ],
+    )
+    def test_unrelated_errors_preserve_reason_and_do_not_reduce_later_limits(
+        self, status, message
+    ):
+        error = {"error": {"message": message, "reason": "upstream-reason"}}
+        page = {"tracks": {"items": [], "limit": 50, "offset": 20}}
+        sp, request = self._client((status, error), (200, page))
 
-        with pytest.raises(SpotifyException):
-            spotify_api.search(sp, "", qtype="track", limit=20, offset=0)
+        with pytest.raises(SpotifyException) as caught:
+            spotify_api.search(sp, "Invalid limit", qtype="track", limit=20, offset=0)
 
-        assert sp.search.call_count == 1
+        assert caught.value.http_status == status
+        assert caught.value.reason == "upstream-reason"
+        assert "limit=20" in caught.value.msg
+        assert caught.value.msg.endswith(f"\n {message}")
+        assert request.call_count == 1
+        assert (
+            spotify_api.search(sp, "trance", qtype="track", limit=50, offset=20) == page
+        )
+        assert request.call_args.kwargs["params"]["limit"] == 50
+
+    def test_failed_fallback_does_not_poison_the_ceiling(self):
+        error = {"error": {"message": "Invalid query", "reason": "bad-query"}}
+        page = {"tracks": {"items": [], "limit": 50, "offset": 30}}
+        sp, request = self._client((400, self.INVALID_LIMIT), (400, error), (200, page))
+
+        with pytest.raises(SpotifyException) as caught:
+            spotify_api.search(sp, "trance", qtype="track", limit=20, offset=30)
+
+        assert caught.value.http_status == 400
+        assert caught.value.reason == "bad-query"
+        assert caught.value.msg.endswith("\n Invalid query")
+        assert spotify_api.search(sp, "goa", qtype="track", limit=50, offset=30) == page
+        assert [
+            (c.kwargs["params"]["limit"], c.kwargs["params"]["offset"])
+            for c in request.call_args_list
+        ] == [(20, 30), (10, 30), (50, 30)]
 
 
 class TestLibraryWrites:

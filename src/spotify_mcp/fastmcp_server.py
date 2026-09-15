@@ -1702,12 +1702,12 @@ def create_mood_playlist(mood: str, genre: str = "", decade: str = "") -> str:
 Workflow:
 1. Use search_music with different queries to find diverse songs
    - For large search results, use offset parameter to get more options
-   - Example: search_music("upbeat pop", limit=20, offset=0) then offset=20 for more
+   - Example: search_music("upbeat pop", limit=20, offset=0), then use the response's offset + limit for the next offset
 2. Create playlist with create_playlist
 3. Add tracks with add_tracks_to_playlist (supports up to 100 tracks per call)
 
 Pagination Tips:
-- Search results are paginated (limit=1-50, use offset for more results)
+- Search results are paginated (request limit=1-50; restricted apps serve at most 10)
 - For variety, try multiple search queries with different offsets
 - Large playlists: batch add tracks in groups of 50-100
 
@@ -1757,10 +1757,10 @@ def discover_music_systematically(
 
 Search Strategy with Pagination:
 1. Initial search: search_music("{seed_query}", limit=20, offset=0)
-2. Diverse results: Use different offsets to explore deeper:
-   - Popular results: offset=0-20
-   - Hidden gems: offset=20-40, offset=40-60
-   - Deep cuts: offset=80-100+
+2. Diverse results: Advance using each response's offset + limit:
+   - Popular results: the first page
+   - Hidden gems: the next few pages
+   - Deep cuts: continue paging while more results are available
 
 3. Related searches with pagination:
    - Artist names from initial results
@@ -1769,13 +1769,13 @@ Search Strategy with Pagination:
    - Similar mood/energy descriptors
 
 Exploration Depth:
-- "light": 2-3 search queries, 20 results each
-- "medium": 5-6 search queries, explore offsets 0-40
-- "deep": 10+ search queries, explore offsets 0-100+
+- "light": 2-3 search queries, one page each
+- "medium": 5-6 search queries, a few pages each
+- "deep": 10+ search queries, explore more pages as needed
 
 Pagination Best Practices:
 - Start with limit=20 for quick overview
-- Use offset to avoid duplicate results
+- Use the returned offset + limit for the next offset to avoid skips or duplicates
 - Try different query variations rather than just advancing offset
 - Stop when you find enough quality matches
 

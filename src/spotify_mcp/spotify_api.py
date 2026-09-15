@@ -284,11 +284,6 @@ SEARCH_LIMIT_MAX = 50
 _search_limit_max: int = SEARCH_LIMIT_MAX
 
 
-def search_limit_ceiling() -> int:
-    """The largest search `limit` known to be accepted for this app."""
-    return _search_limit_max
-
-
 def search(
     sp: spotipy.Spotify, query: str, *, qtype: str, limit: int, offset: int
 ) -> dict:
@@ -300,21 +295,18 @@ def search(
         result: dict = sp.search(q=query, type=qtype, limit=capped, offset=offset)
         return result
     except SpotifyException as e:
-        # Only a limit that is too large earns a retry. A 400 for a malformed
-        # query must still surface.
+        # Spotipy prefixes the upstream message with the response URL, whose
+        # query string contains "limit" even for unrelated search errors.
+        message = (e.msg or "").split("\n", 1)[-1].strip().lower()
         too_large = capped > _RESTRICTED_SEARCH_LIMIT
-        if (
-            e.http_status != 400
-            or "limit" not in (e.msg or "").lower()
-            or not too_large
-        ):
+        if e.http_status != 400 or message != "invalid limit" or not too_large:
             raise
+        retried: dict = sp.search(
+            q=query, type=qtype, limit=_RESTRICTED_SEARCH_LIMIT, offset=offset
+        )
         _search_limit_max = _RESTRICTED_SEARCH_LIMIT
         logging.getLogger(__name__).info(
             f"Spotify rejected search limit {capped}; "
             f"this app caps search at {_RESTRICTED_SEARCH_LIMIT} results per page"
-        )
-        retried: dict = sp.search(
-            q=query, type=qtype, limit=_RESTRICTED_SEARCH_LIMIT, offset=offset
         )
         return retried
