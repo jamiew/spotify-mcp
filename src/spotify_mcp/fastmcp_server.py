@@ -797,7 +797,6 @@ def get_track_info(track_ids: str | list[str]) -> TrackList:
 # rather than the 400/404 that `with_fallback` treats as a regime miss, and no
 # alternative path serves it. Degrade to no top tracks instead of failing the
 # whole tool, the same way the stripped `followers`/`popularity` fields do.
-_TOP_TRACKS_WITHHELD_STATUSES = frozenset({401, 403})
 
 
 def _artist_top_tracks_or_empty(artist_id: str) -> dict:
@@ -806,7 +805,7 @@ def _artist_top_tracks_or_empty(artist_id: str) -> dict:
         top_tracks: dict = spotify_client.artist_top_tracks(artist_id)
         return top_tracks
     except SpotifyException as e:
-        if e.http_status not in _TOP_TRACKS_WITHHELD_STATUSES:
+        if e.http_status != 403:
             raise
         logger.info(
             f"🎤 Top tracks withheld for artist {artist_id} "
