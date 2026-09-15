@@ -18,6 +18,16 @@ def reset_regime_cache():
     spotify_api._legacy_families.clear()
 
 
+@pytest.fixture(autouse=True)
+def no_playback_confirm_delay():
+    """`control_playback` waits between read-backs while confirming an action took
+    effect. A static mock never changes, so every unconfirmable action would burn the
+    full delay budget and the suite would crawl. Attempt count is left alone so the
+    retry behaviour itself stays under test."""
+    with patch("spotify_mcp.fastmcp_server._CONFIRM_DELAY_S", 0):
+        yield
+
+
 # Sample Spotify API response data for testing
 SAMPLE_TRACK = {
     "id": "4iV5W9uYEdYUVa79Axb7Rh",
