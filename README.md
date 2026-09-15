@@ -35,18 +35,18 @@ of remote-MCP auth on Workers generally.
 | Tool | Does |
 | --- | --- |
 | `get_me` | The signed-in user's profile |
-| `search_music` | Search tracks, albums, artists or playlists, with filters |
-| `get_track_info` | Track details, batched up to 50 per call |
-| `get_artist_info` | Artist details plus their top tracks |
+| `search_music` | Search tracks, albums, artists or playlists, with filters and regime-aware page limits |
+| `get_track_info` | Details for up to 50 tracks; individual reads when batching is unavailable |
+| `get_artist_info` | Artist details plus their top tracks where available |
 | `get_album_info` | Album details plus its track list |
 | `get_playback_state` | What's playing now: track, device, progress, shuffle, repeat |
-| `control_playback` | Play, pause, next, previous, seek, volume, shuffle, repeat |
+| `control_playback` | Play, pause, next, previous, seek, volume, shuffle, repeat; best-effort state confirmation |
 | `list_devices` | Available Spotify Connect devices |
 | `transfer_playback` | Move playback to another device |
 | `get_queue` | Now playing plus the upcoming queue |
 | `add_to_queue` | Queue a track |
 | `get_user_playlists` | The user's playlists, paginated |
-| `get_playlist_info` | Playlist metadata without its tracks |
+| `get_playlist_info` | Playlist metadata without its tracks; track count when available |
 | `get_playlist_tracks` | Playlist tracks, paginated to any size |
 | `create_playlist` | Create a playlist |
 | `modify_playlist_details` | Rename a playlist or change its description/visibility |
@@ -62,6 +62,9 @@ of remote-MCP auth on Workers generally.
 
 `tests/test_tool_metadata.py` fails if this table drifts from the code, or if a tool ships
 without a title, icon and behaviour annotations.
+
+Restricted apps cap search pages at 10 results. Advance with the returned `offset + limit`,
+not the requested page size. Individual track fallbacks can require up to 50 Spotify requests.
 
 ## Installation
 

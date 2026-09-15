@@ -127,6 +127,13 @@ paths for the same operation. `with_fallback` in `spotify_api.py` tries restrict
 falls back to legacy, and caches the answer per endpoint family. Paths and bodies there are
 ported from spotify-mcp-cloudflare, which verified them against the live API.
 
+Search retries an oversized page at 10 only for an invalid-limit response. Batch track reads
+fall back to individual requests on 403. Both cache only successful fallbacks. Spotipy prefixes
+error messages with the request URL: do not mistake its `limit=` parameter for a limit error.
+Artist top tracks and playlist counts are optional enrichment on 403, not on authentication
+or rate-limit failures. `control_playback` is async; confirmation is best effort and returns
+the last observation if a later read fails.
+
 Fields the restricted regime strips (`followers`, `popularity`, `email`, `country`, `product`)
 are optional on every Pydantic model — keep them that way, and never make a
 stripped-in-restricted field required.

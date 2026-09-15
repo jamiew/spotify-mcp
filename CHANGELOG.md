@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+- retain artist metadata when Spotify withholds top tracks, without hiding authentication errors (#19)
+- retry search at the restricted 10-result cap only for an actual invalid-limit error;
+  cache successful fallbacks and paginate using the returned page size (#20)
+- recover missing playlist totals when contents are readable, retaining metadata when they are forbidden (#21)
+- fall back to individual track reads on a batch 403, caching only after success;
+  authentication and rate-limit errors still propagate (#22)
+- make playback confirmation bounded and nonblocking, allow skips from local tracks,
+  and retain the last observation when a later confirmation read fails.
+  Direct Python callers now await `control_playback`; MCP clients are unchanged (#23)
+
 ## 2026-07-30 — 0.4.1
 - cap the runtime dependencies below their next major. `mcp` 2.0 removed
   `mcp.server.fastmcp`, which this server is built on, so the open `>=1.27.1`
