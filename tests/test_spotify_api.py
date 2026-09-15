@@ -15,6 +15,7 @@ from spotify_mcp.spotify_api import (
     RETRY_STATUS_CODES,
     Client,
     _legacy_families,
+    get_tracks,
     load_config,
     remove_saved_tracks,
     save_tracks,
@@ -156,6 +157,98 @@ class TestWithFallback:
             with_fallback("fam", restricted, legacy)
 
         legacy.assert_not_called()
+
+
+class TestGetTracks:
+    """Batch track reads are withheld from restricted apps (403) while single
+    reads work. No fake upstream reports that, so it is asserted directly."""
+
+    FORBIDDEN = SpotifyException(403, -1, "Forbidden")
+
+    @pytest.fixture(autouse=True)
+    def _reset_withheld(self):
+        spotify_api._batch_tracks_withheld = False
+        yield
+        spotify_api._batch_tracks_withheld = False
+
+    def test_a_single_id_never_uses_the_batch_route(self):
+        sp = MagicMock()
+        sp.track.return_value = {"id": "t1"}
+
+        assert get_tracks(sp, ["t1"]) == [{"id": "t1"}]
+
+        sp.track.assert_called_once_with("t1")
+        sp.tracks.assert_not_called()
+
+    def test_batches_when_allowed(self):
+        sp = MagicMock()
+        sp.tracks.return_value = {"tracks": [{"id": "t1"}, {"id": "t2"}]}
+
+        assert get_tracks(sp, ["t1", "t2"]) == [{"id": "t1"}, {"id": "t2"}]
+
+        sp.tracks.assert_called_once_with(["t1", "t2"])
+        sp.track.assert_not_called()
+
+    def test_drops_null_entries_from_a_batch(self):
+        sp = MagicMock()
+        sp.tracks.return_value = {"tracks": [{"id": "t1"}, None]}
+
+        assert get_tracks(sp, ["t1", "gone"]) == [{"id": "t1"}]
+
+    def test_falls_back_to_per_id_reads_when_withheld(self):
+        sp = MagicMock()
+        sp.tracks.side_effect = self.FORBIDDEN
+        sp.track.side_effect = [{"id": "t1"}, {"id": "t2"}]
+
+        assert get_tracks(sp, ["t1", "t2"]) == [{"id": "t1"}, {"id": "t2"}]
+
+        assert [c.args[0] for c in sp.track.call_args_list] == ["t1", "t2"]
+
+    def test_remembers_that_batching_is_withheld(self):
+        sp = MagicMock()
+        sp.tracks.side_effect = self.FORBIDDEN
+        sp.track.side_effect = [{"id": "t1"}, {"id": "t2"}, {"id": "t3"}, {"id": "t4"}]
+
+        get_tracks(sp, ["t1", "t2"])
+        get_tracks(sp, ["t3", "t4"])
+
+        # the 403 is paid once, not on every call
+        assert sp.tracks.call_count == 1
+        assert sp.track.call_count == 4
+
+    def test_failed_fallback_does_not_disable_recovered_batch_reads(self):
+        sp = MagicMock()
+        expected = [{"id": "t1"}, {"id": "t2"}]
+        sp.tracks.side_effect = [self.FORBIDDEN, {"tracks": expected}]
+        error = SpotifyException(401, -1, "Expired token")
+        sp.track.side_effect = error
+
+        with pytest.raises(SpotifyException) as raised:
+            get_tracks(sp, ["t1", "t2"])
+        assert raised.value is error
+
+        assert get_tracks(sp, ["t1", "t2"]) == expected
+        assert sp.tracks.call_count == 2
+
+    @pytest.mark.parametrize("status", [401, 429, 500])
+    def test_other_batch_errors_propagate(self, status):
+        sp = MagicMock()
+        error = SpotifyException(status, -1, "Request failed", reason="TEST_REASON")
+        sp.tracks.side_effect = error
+
+        with pytest.raises(SpotifyException) as raised:
+            get_tracks(sp, ["t1", "t2"])
+        assert raised.value is error
+
+        sp.track.assert_not_called()
+
+    def test_accepts_uris_as_well_as_ids(self):
+        sp = MagicMock()
+        sp.tracks.return_value = {"tracks": [{"id": "t1"}, {"id": "t2"}]}
+
+        get_tracks(sp, ["spotify:track:t1", "t2"])
+
+        sp.tracks.assert_called_once_with(["t1", "t2"])
 
 
 class TestSearchLimitCeiling:

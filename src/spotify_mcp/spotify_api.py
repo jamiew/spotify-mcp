@@ -177,6 +177,43 @@ def with_fallback[T](
         return result
 
 
+# /v1/tracks?ids= is withheld from restricted apps (403) while /v1/tracks/{id}
+# still works, so batching has to degrade to per-id reads. This is a different
+# shape from `with_fallback`: there is no alternative batch path to swap in, only
+# a different number of requests. Remember the answer so the 403 is paid once per
+# process instead of on every call.
+_batch_tracks_withheld = False
+
+
+def get_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> list[dict]:
+    """Read several tracks, per-id if the batch endpoint is withheld."""
+    global _batch_tracks_withheld
+
+    ids = [to_id(t) for t in track_ids]
+    # One id never needs the batch route, and asking for it would trade a working
+    # request for a guaranteed 403 on restricted apps.
+    if len(ids) == 1:
+        return [sp.track(ids[0])]
+
+    if not _batch_tracks_withheld:
+        try:
+            result = sp.tracks(ids)
+            return [t for t in (result.get("tracks") or []) if t]
+        except SpotifyException as e:
+            if e.http_status != 403:
+                raise
+            # A failed fallback does not prove the batch endpoint is withheld.
+            tracks = [sp.track(i) for i in ids]
+            _batch_tracks_withheld = True
+            logging.getLogger(__name__).info(
+                f"Spotify withheld batch track reads (HTTP {e.http_status}); "
+                f"falling back to one request per track"
+            )
+            return tracks
+
+    return [sp.track(i) for i in ids]
+
+
 def playlist_items(
     sp: spotipy.Spotify, playlist_id: str, *, limit: int, offset: int
 ) -> dict:
