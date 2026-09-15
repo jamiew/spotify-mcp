@@ -193,10 +193,9 @@ class TestGetTracks:
 
         assert get_tracks(sp, ["t1", "gone"]) == [{"id": "t1"}]
 
-    @pytest.mark.parametrize("status", [401, 403])
-    def test_falls_back_to_per_id_reads_when_withheld(self, status):
+    def test_falls_back_to_per_id_reads_when_withheld(self):
         sp = MagicMock()
-        sp.tracks.side_effect = SpotifyException(status, -1, "Forbidden")
+        sp.tracks.side_effect = self.FORBIDDEN
         sp.track.side_effect = [{"id": "t1"}, {"id": "t2"}]
 
         assert get_tracks(sp, ["t1", "t2"]) == [{"id": "t1"}, {"id": "t2"}]
@@ -214,17 +213,32 @@ class TestGetTracks:
         # the 403 is paid once, not on every call
         assert sp.tracks.call_count == 1
         assert sp.track.call_count == 4
-        assert spotify_api.batch_tracks_withheld() is True
 
-    def test_other_batch_errors_propagate(self):
+    def test_failed_fallback_does_not_disable_recovered_batch_reads(self):
         sp = MagicMock()
-        sp.tracks.side_effect = SpotifyException(500, -1, "Server Error")
+        expected = [{"id": "t1"}, {"id": "t2"}]
+        sp.tracks.side_effect = [self.FORBIDDEN, {"tracks": expected}]
+        error = SpotifyException(401, -1, "Expired token")
+        sp.track.side_effect = error
 
-        with pytest.raises(SpotifyException):
+        with pytest.raises(SpotifyException) as raised:
             get_tracks(sp, ["t1", "t2"])
+        assert raised.value is error
+
+        assert get_tracks(sp, ["t1", "t2"]) == expected
+        assert sp.tracks.call_count == 2
+
+    @pytest.mark.parametrize("status", [401, 429, 500])
+    def test_other_batch_errors_propagate(self, status):
+        sp = MagicMock()
+        error = SpotifyException(status, -1, "Request failed", reason="TEST_REASON")
+        sp.tracks.side_effect = error
+
+        with pytest.raises(SpotifyException) as raised:
+            get_tracks(sp, ["t1", "t2"])
+        assert raised.value is error
 
         sp.track.assert_not_called()
-        assert spotify_api.batch_tracks_withheld() is False
 
     def test_accepts_uris_as_well_as_ids(self):
         sp = MagicMock()

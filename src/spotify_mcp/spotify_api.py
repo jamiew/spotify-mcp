@@ -182,13 +182,7 @@ def with_fallback[T](
 # shape from `with_fallback`: there is no alternative batch path to swap in, only
 # a different number of requests. Remember the answer so the 403 is paid once per
 # process instead of on every call.
-_BATCH_WITHHELD_STATUSES = frozenset({401, 403})
 _batch_tracks_withheld = False
-
-
-def batch_tracks_withheld() -> bool:
-    """Whether this app has been found unable to read tracks in batches."""
-    return _batch_tracks_withheld
 
 
 def get_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> list[dict]:
@@ -206,13 +200,16 @@ def get_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> list[dict]:
             result = sp.tracks(ids)
             return [t for t in (result.get("tracks") or []) if t]
         except SpotifyException as e:
-            if e.http_status not in _BATCH_WITHHELD_STATUSES:
+            if e.http_status != 403:
                 raise
+            # A failed fallback does not prove the batch endpoint is withheld.
+            tracks = [sp.track(i) for i in ids]
             _batch_tracks_withheld = True
             logging.getLogger(__name__).info(
                 f"Spotify withheld batch track reads (HTTP {e.http_status}); "
                 f"falling back to one request per track"
             )
+            return tracks
 
     return [sp.track(i) for i in ids]
 
