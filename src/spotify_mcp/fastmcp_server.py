@@ -615,7 +615,10 @@ def search_music(
     Args:
         query: Search query
         qtype: Type ('track', 'album', 'artist', 'playlist')
-        limit: Max results per page (1-50, default 10)
+        limit: Max results per page (1-50, default 10). Spotify caps search at 10
+            per page for restricted apps and rejects anything larger; a larger
+            limit is retried at the cap rather than failing. Check the returned
+            `limit` for what was actually served, and use `offset` to go deeper.
         offset: Number of results to skip for pagination (default 0)
         year: Filter by year (e.g., '2024')
         year_range: Filter by year range (e.g., '2020-2024')
@@ -630,7 +633,7 @@ def search_music(
     Example: query='love', year='2024', genre='pop' searches for 'love year:2024 genre:pop'
     """
     try:
-        limit = max(1, min(50, limit))
+        limit = max(1, min(spotify_api.SEARCH_LIMIT_MAX, limit))
 
         # Build filtered query
         filters = []
@@ -650,8 +653,8 @@ def search_music(
         logger.info(
             f"🔍 Searching {qtype}s: '{full_query}' (limit={limit}, offset={offset})"
         )
-        result = spotify_client.search(
-            q=full_query, type=qtype, limit=limit, offset=offset
+        result = spotify_api.search(
+            spotify_client, full_query, qtype=qtype, limit=limit, offset=offset
         )
 
         tracks = []
@@ -795,6 +798,27 @@ def get_track_info(track_ids: str | list[str]) -> TrackList:
         raise convert_spotify_error(e) from e
 
 
+# /artists/{id}/top-tracks is withheld from restricted apps: it answers 403
+# rather than the 400/404 that `with_fallback` treats as a regime miss, and no
+# alternative path serves it. Degrade to no top tracks instead of failing the
+# whole tool, the same way the stripped `followers`/`popularity` fields do.
+
+
+def _artist_top_tracks_or_empty(artist_id: str) -> dict:
+    """Read an artist's top tracks, returning `{}` when Spotify withholds them."""
+    try:
+        top_tracks: dict = spotify_client.artist_top_tracks(artist_id)
+        return top_tracks
+    except SpotifyException as e:
+        if e.http_status != 403:
+            raise
+        logger.info(
+            f"🎤 Top tracks withheld for artist {artist_id} "
+            f"(HTTP {e.http_status}); returning artist without them"
+        )
+        return {}
+
+
 @mcp.tool(
     title="Get Artist Info",
     annotations=ToolAnnotations(
@@ -809,12 +833,14 @@ def get_artist_info(artist_id: str) -> ArtistInfo:
     Args:
         artist_id: Spotify artist ID
     Returns:
-        ArtistInfo with the artist and their top tracks
+        ArtistInfo with the artist and, where the app is allowed to read them,
+        their top tracks. `top_tracks` is empty rather than an error when
+        Spotify withholds that endpoint.
     """
     try:
         logger.info(f"🎤 Getting artist info: {artist_id}")
         result: ArtistObject = spotify_client.artist(artist_id)
-        top_tracks = spotify_client.artist_top_tracks(artist_id)
+        top_tracks = _artist_top_tracks_or_empty(artist_id)
 
         followers = result.get("followers") or {}
         artist = Artist(
@@ -830,6 +856,19 @@ def get_artist_info(artist_id: str) -> ArtistInfo:
         return ArtistInfo(artist=artist, top_tracks=tracks)
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
+
+
+def _total_tracks(playlist_id: str, reported: object) -> int | None:
+    """Prefer the count Spotify reported, else read it off the items endpoint."""
+    if isinstance(reported, int):
+        return reported
+    try:
+        return spotify_api.playlist_total(spotify_client, playlist_id)
+    except SpotifyException as e:
+        # Restricted apps can read metadata without access to playlist contents.
+        if e.http_status != 403:
+            raise
+        return None
 
 
 @mcp.tool(
@@ -866,7 +905,7 @@ def get_playlist_info(playlist_id: str) -> Playlist:
             owner=owner.get("display_name"),
             description=result.get("description"),
             tracks=None,  # No tracks - use get_playlist_tracks
-            total_tracks=tracks.get("total"),
+            total_tracks=_total_tracks(playlist_id, tracks.get("total")),
             public=result.get("public"),
         )
 
@@ -1609,7 +1648,7 @@ def playlist_resource(playlist_id: str) -> str:
             id=result["id"],
             owner=owner.get("display_name"),
             description=result.get("description"),
-            total_tracks=tracks.get("total"),
+            total_tracks=_total_tracks(playlist_id, tracks.get("total")),
             public=result.get("public"),
         ).model_dump_json()
     except Exception as e:
@@ -1701,12 +1740,12 @@ def create_mood_playlist(mood: str, genre: str = "", decade: str = "") -> str:
 Workflow:
 1. Use search_music with different queries to find diverse songs
    - For large search results, use offset parameter to get more options
-   - Example: search_music("upbeat pop", limit=20, offset=0) then offset=20 for more
+   - Example: search_music("upbeat pop", limit=20, offset=0), then use the response's offset + limit for the next offset
 2. Create playlist with create_playlist
 3. Add tracks with add_tracks_to_playlist (supports up to 100 tracks per call)
 
 Pagination Tips:
-- Search results are paginated (limit=1-50, use offset for more results)
+- Search results are paginated (request limit=1-50; restricted apps serve at most 10)
 - For variety, try multiple search queries with different offsets
 - Large playlists: batch add tracks in groups of 50-100
 
@@ -1756,10 +1795,10 @@ def discover_music_systematically(
 
 Search Strategy with Pagination:
 1. Initial search: search_music("{seed_query}", limit=20, offset=0)
-2. Diverse results: Use different offsets to explore deeper:
-   - Popular results: offset=0-20
-   - Hidden gems: offset=20-40, offset=40-60
-   - Deep cuts: offset=80-100+
+2. Diverse results: Advance using each response's offset + limit:
+   - Popular results: the first page
+   - Hidden gems: the next few pages
+   - Deep cuts: continue paging while more results are available
 
 3. Related searches with pagination:
    - Artist names from initial results
@@ -1768,13 +1807,13 @@ Search Strategy with Pagination:
    - Similar mood/energy descriptors
 
 Exploration Depth:
-- "light": 2-3 search queries, 20 results each
-- "medium": 5-6 search queries, explore offsets 0-40
-- "deep": 10+ search queries, explore offsets 0-100+
+- "light": 2-3 search queries, one page each
+- "medium": 5-6 search queries, a few pages each
+- "deep": 10+ search queries, explore more pages as needed
 
 Pagination Best Practices:
 - Start with limit=20 for quick overview
-- Use offset to avoid duplicate results
+- Use the returned offset + limit for the next offset to avoid skips or duplicates
 - Try different query variations rather than just advancing offset
 - Stop when you find enough quality matches
 

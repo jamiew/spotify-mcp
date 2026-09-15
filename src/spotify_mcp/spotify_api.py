@@ -226,6 +226,19 @@ def playlist_items(
     )
 
 
+def playlist_total(sp: spotipy.Spotify, playlist_id: str) -> int | None:
+    """How many entries a playlist holds, or None if Spotify won't say.
+
+    `playlist(fields="tracks.total")` is the obvious source and does not work:
+    restricted apps get the field stripped, so it comes back absent (asking for
+    it alone yields a bare `{}`). A one-item page of the items endpoint still
+    reports the real `total`, so read it from there.
+    """
+    page = playlist_items(sp, playlist_id, limit=1, offset=0)
+    total = page.get("total")
+    return total if isinstance(total, int) else None
+
+
 def create_playlist(
     sp: spotipy.Spotify, name: str, description: str, public: bool
 ) -> dict:
@@ -310,3 +323,40 @@ def remove_saved_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> None:
         ),
         lambda: sp.current_user_saved_tracks_delete(tracks=ids),
     )
+
+
+# Search page size is regime-dependent: legacy apps get 50, restricted apps get
+# 10 and answer 400 "Invalid limit" for anything above it. Which one we are is
+# not introspectable, so discover the ceiling on the first rejection and reuse it
+# for the life of the process, the same way `with_fallback` caches a family.
+_RESTRICTED_SEARCH_LIMIT = 10
+SEARCH_LIMIT_MAX = 50
+_search_limit_max: int = SEARCH_LIMIT_MAX
+
+
+def search(
+    sp: spotipy.Spotify, query: str, *, qtype: str, limit: int, offset: int
+) -> dict:
+    """Search, retrying at the restricted page size if the limit is rejected."""
+    global _search_limit_max
+
+    capped = min(limit, _search_limit_max)
+    try:
+        result: dict = sp.search(q=query, type=qtype, limit=capped, offset=offset)
+        return result
+    except SpotifyException as e:
+        # Spotipy prefixes the upstream message with the response URL, whose
+        # query string contains "limit" even for unrelated search errors.
+        message = (e.msg or "").split("\n", 1)[-1].strip().lower()
+        too_large = capped > _RESTRICTED_SEARCH_LIMIT
+        if e.http_status != 400 or message != "invalid limit" or not too_large:
+            raise
+        retried: dict = sp.search(
+            q=query, type=qtype, limit=_RESTRICTED_SEARCH_LIMIT, offset=offset
+        )
+        _search_limit_max = _RESTRICTED_SEARCH_LIMIT
+        logging.getLogger(__name__).info(
+            f"Spotify rejected search limit {capped}; "
+            f"this app caps search at {_RESTRICTED_SEARCH_LIMIT} results per page"
+        )
+        return retried
