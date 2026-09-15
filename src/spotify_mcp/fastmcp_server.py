@@ -5,9 +5,9 @@ Clean, simple implementation using FastMCP's automatic features.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import time
 from typing import TYPE_CHECKING, cast
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -422,7 +422,7 @@ def get_me() -> UserProfile:
 # Spotify's player writes are asynchronous: /me/player/play and friends answer 204
 # immediately, but a GET straight afterwards can still serve the pre-action state, or
 # None while an idle device wakes up (which reads back as is_playing=False with every
-# field empty). So confirm the action landed instead of trusting one immediate read.
+# field empty). Make a bounded, best-effort confirmation rather than trusting one read.
 _CONFIRM_ATTEMPTS = 5
 _CONFIRM_DELAY_S = 0.2
 
@@ -465,21 +465,28 @@ def _playback_confirmed(
     return lambda _s: True
 
 
-def _await_playback(
+async def _await_playback(
     matches: Callable[[PlaybackState], bool],
 ) -> PlaybackState:
-    """Read playback state until `matches` holds, then return it.
+    """Read playback state until `matches` holds, within a bounded attempt count.
 
-    Returns the last state read once the attempts are exhausted, so a device that
-    genuinely never reaches the expected state degrades to the old behaviour rather
-    than raising or blocking.
+    Return the last observation if attempts run out or a later Spotify read fails.
+    Confirmation failure does not mean the already-issued write failed.
     """
     state = _playback_state()
     for _ in range(_CONFIRM_ATTEMPTS - 1):
         if matches(state):
             return state
-        time.sleep(_CONFIRM_DELAY_S)
-        state = _playback_state()
+        await asyncio.sleep(_CONFIRM_DELAY_S)
+        try:
+            state = _playback_state()
+        except SpotifyException as e:
+            logger.warning(
+                "Playback confirmation failed after a successful write; "
+                "returning the last observation: %s",
+                e,
+            )
+            return state
     return state
 
 
@@ -530,7 +537,7 @@ def get_playback_state() -> PlaybackState:
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def control_playback(
+async def control_playback(
     action: str,
     track_ids: list[str] | None = None,
     context_uri: str | None = None,
@@ -551,20 +558,21 @@ def control_playback(
         device_id: Target device (default: the currently active one)
 
     Returns:
-        PlaybackState after the action has been confirmed to have taken effect.
+        Last observed PlaybackState, possibly unconfirmed.
 
-    Note: Spotify applies player changes asynchronously, so the state is read back
-    until it reflects the action rather than once immediately.
+    Confirmation is best effort: at most five post-action reads with brief waits.
+    Stale state or a later read failure returns the last observation. Checks do not
+    verify every requested track, context or device transition.
     """
     try:
         logger.info(f"🎵 Playback action '{action}' (device={device_id or 'active'})")
 
-        # `next`/`previous` are confirmed by the track changing, so the outgoing
-        # track has to be known before the action is issued.
+        # Only the outgoing optional identity is needed; local tracks may have no
+        # catalog id and must not be validated as a Track before issuing the action.
         previous_track_id: str | None = None
         if action in ("next", "previous"):
-            before = _playback_state()
-            previous_track_id = before.track.id if before.track else None
+            before = spotify_client.current_playback()
+            previous_track_id = ((before or {}).get("item") or {}).get("id")
 
         if action == "play":
             if context_uri:
@@ -604,7 +612,7 @@ def control_playback(
         else:
             raise ValueError(f"Invalid action: {action}")
 
-        return _await_playback(
+        return await _await_playback(
             _playback_confirmed(
                 action,
                 previous_track_id=previous_track_id,
