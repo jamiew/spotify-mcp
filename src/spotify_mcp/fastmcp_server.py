@@ -793,6 +793,27 @@ def get_track_info(track_ids: str | list[str]) -> TrackList:
         raise convert_spotify_error(e) from e
 
 
+# /artists/{id}/top-tracks is withheld from restricted apps: it answers 403
+# rather than the 400/404 that `with_fallback` treats as a regime miss, and no
+# alternative path serves it. Degrade to no top tracks instead of failing the
+# whole tool, the same way the stripped `followers`/`popularity` fields do.
+
+
+def _artist_top_tracks_or_empty(artist_id: str) -> dict:
+    """Read an artist's top tracks, returning `{}` when Spotify withholds them."""
+    try:
+        top_tracks: dict = spotify_client.artist_top_tracks(artist_id)
+        return top_tracks
+    except SpotifyException as e:
+        if e.http_status != 403:
+            raise
+        logger.info(
+            f"🎤 Top tracks withheld for artist {artist_id} "
+            f"(HTTP {e.http_status}); returning artist without them"
+        )
+        return {}
+
+
 @mcp.tool(
     title="Get Artist Info",
     annotations=ToolAnnotations(
@@ -807,12 +828,14 @@ def get_artist_info(artist_id: str) -> ArtistInfo:
     Args:
         artist_id: Spotify artist ID
     Returns:
-        ArtistInfo with the artist and their top tracks
+        ArtistInfo with the artist and, where the app is allowed to read them,
+        their top tracks. `top_tracks` is empty rather than an error when
+        Spotify withholds that endpoint.
     """
     try:
         logger.info(f"🎤 Getting artist info: {artist_id}")
         result: ArtistObject = spotify_client.artist(artist_id)
-        top_tracks = spotify_client.artist_top_tracks(artist_id)
+        top_tracks = _artist_top_tracks_or_empty(artist_id)
 
         followers = result.get("followers") or {}
         artist = Artist(
