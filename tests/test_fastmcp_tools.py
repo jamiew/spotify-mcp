@@ -396,6 +396,34 @@ class TestGetPlaylistInfo:
 
         assert result.total_tracks == 65
 
+    @pytest.mark.parametrize("reader", [get_playlist_info, playlist_resource])
+    def test_forbidden_contents_preserve_readable_metadata(
+        self, mock_spotify_api, sample_playlist_data, reader
+    ):
+        mock_spotify_api.playlist.return_value = {**sample_playlist_data, "tracks": {}}
+        mock_spotify_api._get.side_effect = SpotifyException(403, -1, "Forbidden")
+
+        result = reader("37i9dQZF1DX0XUsuxWHRQd")
+        metadata = (
+            json.loads(result) if isinstance(result, str) else result.model_dump()
+        )
+
+        assert metadata["id"] == sample_playlist_data["id"]
+        assert metadata["name"] == sample_playlist_data["name"]
+        assert metadata["total_tracks"] is None
+
+    @pytest.mark.parametrize("status", [401, 429, 500])
+    def test_count_lookup_errors_remain_visible(
+        self, mock_spotify_api, sample_playlist_data, status
+    ):
+        mock_spotify_api.playlist.return_value = {**sample_playlist_data, "tracks": {}}
+        error = SpotifyException(status, -1, "Request failed", reason="TEST_REASON")
+        mock_spotify_api._get.side_effect = error
+
+        with pytest.raises(ValueError) as raised:
+            get_playlist_info("37i9dQZF1DX0XUsuxWHRQd")
+        assert raised.value.__cause__ is error
+
     def test_spotify_error(self, mock_spotify_api):
         mock_spotify_api.playlist.side_effect = SPOTIFY_ERROR
 

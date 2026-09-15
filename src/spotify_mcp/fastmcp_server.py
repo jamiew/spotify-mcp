@@ -834,7 +834,13 @@ def _total_tracks(playlist_id: str, reported: object) -> int | None:
     """Prefer the count Spotify reported, else read it off the items endpoint."""
     if isinstance(reported, int):
         return reported
-    return spotify_api.playlist_total(spotify_client, playlist_id)
+    try:
+        return spotify_api.playlist_total(spotify_client, playlist_id)
+    except SpotifyException as e:
+        # Restricted apps can read metadata without access to playlist contents.
+        if e.http_status != 403:
+            raise
+        return None
 
 
 @mcp.tool(
