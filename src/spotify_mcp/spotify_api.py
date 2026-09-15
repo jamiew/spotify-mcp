@@ -189,6 +189,19 @@ def playlist_items(
     )
 
 
+def playlist_total(sp: spotipy.Spotify, playlist_id: str) -> int | None:
+    """How many entries a playlist holds, or None if Spotify won't say.
+
+    `playlist(fields="tracks.total")` is the obvious source and does not work:
+    restricted apps get the field stripped, so it comes back absent (asking for
+    it alone yields a bare `{}`). A one-item page of the items endpoint still
+    reports the real `total`, so read it from there.
+    """
+    page = playlist_items(sp, playlist_id, limit=1, offset=0)
+    total = page.get("total")
+    return total if isinstance(total, int) else None
+
+
 def create_playlist(
     sp: spotipy.Spotify, name: str, description: str, public: bool
 ) -> dict:
