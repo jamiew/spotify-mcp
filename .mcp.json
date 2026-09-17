@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "spotify": {
+      "command": "uv",
+      "args": ["--directory", "${CLAUDE_PROJECT_DIR:-.}", "run", "spotify-mcp"]
+    }
+  }
+}
