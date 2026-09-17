@@ -225,3 +225,11 @@ Built with the **FastMCP framework** — focused single-purpose tools spanning p
 ```bash
 npx @modelcontextprotocol/inspector uv --directory /path/to/spotify_mcp run spotify-mcp
 ```
+
+## Contributors
+
+- [@jamiew](https://github.com/jamiew)
+- [@varunneal](https://github.com/varunneal) — original [varunneal/spotify-mcp](https://github.com/varunneal/spotify-mcp)
+- [@jonico](https://github.com/jonico)
+- [@tedeuxx](https://github.com/tedeuxx)
+- [@karimStekelenburg](https://github.com/karimStekelenburg)
