@@ -77,6 +77,20 @@ class TestGetPlaybackState:
         assert result.is_playing is False
         assert result.track is None
 
+    def test_local_file_playback(self, mock_spotify_api, sample_playback_data):
+        # parse_track is shared with playlist reads: a local file must not raise here
+        local = {**sample_playback_data["item"], "id": None, "is_local": True}
+        mock_spotify_api.current_playback.return_value = {
+            **sample_playback_data,
+            "item": local,
+        }
+
+        result = get_playback_state()
+
+        assert result.track is not None
+        assert result.track.id is None
+        assert result.track.is_local is True
+
     def test_spotify_error_becomes_value_error(self, mock_spotify_api):
         mock_spotify_api.current_playback.side_effect = SPOTIFY_ERROR
 
@@ -873,6 +887,38 @@ class TestGetPlaylistTracks:
         mock_spotify_api._get.assert_called_with(
             "playlists/pl1/items", limit=50, offset=0
         )
+
+    async def test_zero_limit_returns_no_tracks(
+        self, mock_spotify_api, sample_track_data
+    ):
+        mock_spotify_api.playlist.return_value = {"tracks": {"total": 20}}
+        mock_spotify_api._get.return_value = {
+            "items": [{"item": sample_track_data}],
+            "next": None,
+        }
+
+        result = await get_playlist_tracks("pl1", limit=0)
+
+        assert result.items == []
+        assert result.total == 20
+        mock_spotify_api._get.assert_not_called()
+
+    async def test_stripped_metadata_uses_items_total_not_page_length(
+        self, mock_spotify_api, sample_track_data
+    ):
+        # Restricted apps strip tracks.total; the items cursor still reports it
+        mock_spotify_api.playlist.return_value = {}
+        mock_spotify_api._get.return_value = {
+            "items": [{"item": sample_track_data}],
+            "total": 65,
+            "next": "next-page",
+        }
+
+        result = await get_playlist_tracks("pl1", limit=1, offset=10)
+
+        assert result.returned == 1
+        assert result.offset == 10
+        assert result.total == 65
 
     async def test_reads_entries_under_item_key(
         self, mock_spotify_api, sample_track_data

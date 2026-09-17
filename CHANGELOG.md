@@ -10,6 +10,12 @@
 - make playback confirmation bounded and nonblocking, allow skips from local tracks,
   and retain the last observation when a later confirmation read fails.
   Direct Python callers now await `control_playback`; MCP clients are unchanged (#23)
+- read playlist entries from the `item` key, count `limit`/`offset` in playlist positions,
+  and return local files and unresolved rows instead of dropping them or raising:
+  `Track.id` is optional, `Track.is_local` marks local files, and unresolved rows keep
+  their slot so positions stay usable for reorder and remove
+  (thanks [@tedeuxx](https://github.com/tedeuxx), #16, #18)
+- add a real stdio integration test for CLI startup and session recovery after a tool error
 
 ## 2026-07-30 — 0.4.1
 - cap the runtime dependencies below their next major. `mcp` 2.0 removed

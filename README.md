@@ -65,6 +65,9 @@ without a title, icon and behaviour annotations.
 
 Restricted apps cap search pages at 10 results. Advance with the returned `offset + limit`,
 not the requested page size. Individual track fallbacks can require up to 50 Spotify requests.
+Playlist `limit`/`offset` count positions, so a page includes any unresolved rows at those
+positions. Local files and unresolved rows come back with `id: null`, local files also set
+`is_local`, and they keep their position so `reorder_playlist_tracks` indices stay correct.
 
 ## Installation
 
