@@ -36,23 +36,23 @@ of remote-MCP auth on Workers generally.
 | --- | --- |
 | `get_me` | The signed-in user's profile |
 | `search_music` | Search tracks, albums, artists or playlists, with filters and regime-aware page limits |
-| `get_track_info` | Details for up to 50 tracks; individual reads when batching is unavailable |
-| `get_artist_info` | Artist details plus their top tracks where available |
-| `get_album_info` | Album details plus its track list |
+| `get_tracks` | Details for up to 50 tracks; individual reads when batching is unavailable |
+| `get_artist` | Artist details plus their top tracks where available |
+| `get_album` | Album details plus its track list |
 | `get_playback_state` | What's playing now: track, device, progress, shuffle, repeat |
 | `control_playback` | Play, pause, next, previous, seek, volume, shuffle, repeat; best-effort state confirmation |
 | `list_devices` | Available Spotify Connect devices |
 | `transfer_playback` | Move playback to another device |
 | `get_queue` | Now playing plus the upcoming queue |
 | `add_to_queue` | Queue a track |
-| `get_user_playlists` | The user's playlists, paginated |
-| `get_playlist_info` | Playlist metadata without its tracks; track count when available |
+| `list_playlists` | The user's playlists, paginated |
+| `get_playlist` | Playlist metadata without its tracks; track count when available |
 | `get_playlist_tracks` | Playlist tracks, paginated to any size |
 | `create_playlist` | Create a playlist |
-| `modify_playlist_details` | Rename a playlist or change its description/visibility |
+| `update_playlist_details` | Rename a playlist or change its description/visibility |
 | `add_tracks_to_playlist` | Add up to 100 tracks in one call |
 | `remove_tracks_from_playlist` | Remove tracks (confirms first where the client supports it) |
-| `reorder_playlist_tracks` | Move a block of tracks to a new position |
+| `reorder_playlist` | Move a block of tracks to a new position |
 | `unfollow_playlist` | Unfollow a playlist — how Spotify deletes your own |
 | `get_saved_tracks` | Liked Songs, paginated |
 | `save_tracks` | Like tracks |
@@ -67,7 +67,7 @@ Restricted apps cap search pages at 10 results. Advance with the returned `offse
 not the requested page size. Individual track fallbacks can require up to 50 Spotify requests.
 Playlist `limit`/`offset` count positions, so a page includes any unresolved rows at those
 positions. Local files and unresolved rows come back with `id: null`, local files also set
-`is_local`, and they keep their position so `reorder_playlist_tracks` indices stay correct.
+`is_local`, and they keep their position so `reorder_playlist` indices stay correct.
 
 ## Installation
 

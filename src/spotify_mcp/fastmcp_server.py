@@ -56,7 +56,7 @@ Spotify for the signed-in user. Tracks, albums, artists and playlists are accept
 bare IDs or spotify: URIs anywhere.
 
 Start from search_music to turn names into IDs. get_playlist_tracks returns zero-based
-positions, which reorder_playlist_tracks and remove_tracks_from_playlist need.
+positions, which reorder_playlist and remove_tracks_from_playlist need.
 
 Playback tools need Spotify Premium and an open device; if none is active, call
 list_devices then transfer_playback.
@@ -895,14 +895,14 @@ def get_queue() -> QueueState:
 
 
 @mcp.tool(
-    title="Get Track Info",
+    title="Get Tracks",
     annotations=ToolAnnotations(
         readOnlyHint=True, idempotentHint=True, openWorldHint=True
     ),
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def get_track_info(track_ids: str | list[str]) -> TrackList:
+def get_tracks(track_ids: str | list[str]) -> TrackList:
     """Get detailed information about one or more Spotify tracks.
 
     Args:
@@ -959,14 +959,14 @@ def _artist_top_tracks_or_empty(artist_id: str) -> dict:
 
 
 @mcp.tool(
-    title="Get Artist Info",
+    title="Get Artist",
     annotations=ToolAnnotations(
         readOnlyHint=True, idempotentHint=True, openWorldHint=True
     ),
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def get_artist_info(artist_id: str) -> ArtistInfo:
+def get_artist(artist_id: str) -> ArtistInfo:
     """Get detailed information about a Spotify artist.
 
     Args:
@@ -1011,14 +1011,14 @@ def _total_tracks(playlist_id: str, reported: object) -> int | None:
 
 
 @mcp.tool(
-    title="Get Playlist Info",
+    title="Get Playlist",
     annotations=ToolAnnotations(
         readOnlyHint=True, idempotentHint=True, openWorldHint=True
     ),
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def get_playlist_info(playlist_id: str) -> Playlist:
+def get_playlist(playlist_id: str) -> Playlist:
     """Get basic information about a Spotify playlist.
 
     Args:
@@ -1136,7 +1136,7 @@ def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> ActionRes
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def get_user_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
+def list_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
     """Get current user's playlists with pagination support.
 
     Args:
@@ -1157,7 +1157,7 @@ def get_user_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
         result = spotify_client.current_user_playlists(limit=limit, offset=offset)
 
         # Log pagination info
-        log_pagination_info("get_user_playlists", result.get("total", 0), limit, offset)
+        log_pagination_info("list_playlists", result.get("total", 0), limit, offset)
 
         playlists = []
         for item in result.get("items", []):
@@ -1322,7 +1322,7 @@ async def remove_tracks_from_playlist(
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def modify_playlist_details(
+def update_playlist_details(
     playlist_id: str,
     name: str | None = None,
     description: str | None = None,
@@ -1363,7 +1363,7 @@ def modify_playlist_details(
 
 
 @mcp.tool(
-    title="Reorder Playlist Tracks",
+    title="Reorder Playlist",
     annotations=ToolAnnotations(
         readOnlyHint=False,
         # Rewrites existing track order in place, so clients should confirm it.
@@ -1374,7 +1374,7 @@ def modify_playlist_details(
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def reorder_playlist_tracks(
+def reorder_playlist(
     playlist_id: str,
     range_start: int,
     insert_before: int,
@@ -1428,14 +1428,14 @@ def reorder_playlist_tracks(
 
 
 @mcp.tool(
-    title="Get Album Info",
+    title="Get Album",
     annotations=ToolAnnotations(
         readOnlyHint=True, idempotentHint=True, openWorldHint=True
     ),
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def get_album_info(album_id: str) -> AlbumInfo:
+def get_album(album_id: str) -> AlbumInfo:
     """Get detailed information about a Spotify album.
 
     Args:
@@ -1849,7 +1849,7 @@ def discover_similar(artist: str) -> str:
 
 Spotify's related-artists and /recommendations endpoints are gone for third-party
 apps, so work it out from what still exists:
-1. get_artist_info for their genres
+1. get_artist for their genres
 2. search_music with genre: and year: filters to find neighbours
 3. get_top_items to bias toward what I already listen to — skip anything already
    in my top artists
@@ -1907,7 +1907,7 @@ def analyze_large_playlist(playlist_id: str, analysis_type: str = "overview") ->
 For large playlists (>100 tracks), use pagination to analyze efficiently:
 
 Step 1: Get overview
-- Use get_playlist_info(playlist_id) for basic info including total_tracks
+- Use get_playlist(playlist_id) for basic info including total_tracks
 - Check total_tracks to understand playlist size
 
 Step 2: Full analysis (if needed)

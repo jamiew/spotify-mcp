@@ -94,7 +94,7 @@ fails without them, and also if the README tool table drifts from the code.
 Get `destructiveHint` right rather than safe-by-default: clients use it to decide what to
 confirm with the user, so marking an additive tool destructive trains people to click through
 the prompts that matter. Destructive means overwrites or deletes existing data
-(`remove_saved_tracks`, `unfollow_playlist`, `reorder_playlist_tracks`), not merely "writes"
+(`remove_saved_tracks`, `unfollow_playlist`, `reorder_playlist`), not merely "writes"
 (`save_tracks`, `add_to_queue`).
 
 Guidance that applies to the whole surface goes in `INSTRUCTIONS` at the top of

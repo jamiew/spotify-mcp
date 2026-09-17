@@ -43,7 +43,7 @@ Run these and compare against the expectations:
 | Call | Full/legacy regime | Restricted regime |
 | --- | --- | --- |
 | `get_me` | returns `email`, `country`, `product` | id only |
-| `get_artist_info` on any artist | has `followers`, `popularity` | both absent |
+| `get_artist` on any artist | has `followers`, `popularity` | both absent |
 | `search_music` with `limit=20` | can return >10 | capped at 10 |
 | `save_tracks` on one id | succeeds via legacy `/me/tracks` | succeeds via `/me/library` |
 

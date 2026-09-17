@@ -26,28 +26,28 @@ from spotify_mcp.fastmcp_server import (
     current_playback_resource,
     current_user,
     discover_music_systematically,
-    get_album_info,
-    get_artist_info,
+    get_album,
+    get_artist,
     get_me,
     get_playback_state,
-    get_playlist_info,
+    get_playlist,
     get_playlist_tracks,
     get_queue,
     get_recently_played,
     get_saved_tracks,
     get_top_items,
-    get_track_info,
-    get_user_playlists,
+    get_tracks,
     list_devices,
-    modify_playlist_details,
+    list_playlists,
     playlist_resource,
     remove_saved_tracks,
     remove_tracks_from_playlist,
-    reorder_playlist_tracks,
+    reorder_playlist,
     save_tracks,
     search_music,
     track_resource,
     unfollow_playlist,
+    update_playlist_details,
 )
 
 # A SpotifyException the tools should translate into a ValueError.
@@ -464,11 +464,11 @@ class TestQueue:
             get_queue()
 
 
-class TestGetTrackInfo:
+class TestGetTracks:
     def test_single_track(self, mock_spotify_api, sample_track_data):
         mock_spotify_api.track.return_value = sample_track_data
 
-        result = get_track_info("4iV5W9uYEdYUVa79Axb7Rh")
+        result = get_tracks("4iV5W9uYEdYUVa79Axb7Rh")
 
         assert len(result.tracks) == 1
         assert result.tracks[0].artist == "Rick Astley"
@@ -479,30 +479,30 @@ class TestGetTrackInfo:
             "tracks": [sample_track_data, sample_track_data]
         }
 
-        result = get_track_info(["id1", "id2"])
+        result = get_tracks(["id1", "id2"])
 
         assert len(result.tracks) == 2
         mock_spotify_api.tracks.assert_called_once_with(["id1", "id2"])
 
     def test_too_many_ids_raises(self, mock_spotify_api):
         with pytest.raises(ValueError, match="Maximum 50"):
-            get_track_info([f"id{i}" for i in range(51)])
+            get_tracks([f"id{i}" for i in range(51)])
 
     def test_spotify_error(self, mock_spotify_api):
         mock_spotify_api.track.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
-            get_track_info("badid")
+            get_tracks("badid")
 
 
-class TestGetArtistInfo:
+class TestGetArtist:
     def test_success(self, mock_spotify_api, sample_artist_data, sample_track_data):
         mock_spotify_api.artist.return_value = sample_artist_data
         mock_spotify_api.artist_top_tracks.return_value = {
             "tracks": [sample_track_data]
         }
 
-        result = get_artist_info("0gxyHStUsqpMadRV0Di1Qt")
+        result = get_artist("0gxyHStUsqpMadRV0Di1Qt")
 
         assert result.artist.name == "Rick Astley"
         assert result.artist.followers == 1234567
@@ -514,7 +514,7 @@ class TestGetArtistInfo:
         mock_spotify_api.artist.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
-            get_artist_info("badid")
+            get_artist("badid")
 
     def test_withheld_top_tracks_still_returns_artist(
         self, mock_spotify_api, sample_artist_data
@@ -525,7 +525,7 @@ class TestGetArtistInfo:
             403, -1, "Forbidden"
         )
 
-        result = get_artist_info("0gxyHStUsqpMadRV0Di1Qt")
+        result = get_artist("0gxyHStUsqpMadRV0Di1Qt")
 
         assert result.artist.name == "Rick Astley"
         assert result.top_tracks == []
@@ -540,15 +540,15 @@ class TestGetArtistInfo:
         mock_spotify_api.artist_top_tracks.side_effect = error
 
         with pytest.raises(ValueError) as raised:
-            get_artist_info("0gxyHStUsqpMadRV0Di1Qt")
+            get_artist("0gxyHStUsqpMadRV0Di1Qt")
         assert raised.value.__cause__ is error
 
 
-class TestGetPlaylistInfo:
+class TestGetPlaylist:
     def test_success(self, mock_spotify_api, sample_playlist_data):
         mock_spotify_api.playlist.return_value = sample_playlist_data
 
-        result = get_playlist_info("37i9dQZF1DX0XUsuxWHRQd")
+        result = get_playlist("37i9dQZF1DX0XUsuxWHRQd")
 
         assert result.name == "RapCaviar"
         assert result.total_tracks == 50
@@ -566,11 +566,11 @@ class TestGetPlaylistInfo:
         mock_spotify_api.playlist.return_value = {**sample_playlist_data, "tracks": {}}
         mock_spotify_api._get.return_value = {"items": [], "total": 65}
 
-        result = get_playlist_info("37i9dQZF1DX0XUsuxWHRQd")
+        result = get_playlist("37i9dQZF1DX0XUsuxWHRQd")
 
         assert result.total_tracks == 65
 
-    @pytest.mark.parametrize("reader", [get_playlist_info, playlist_resource])
+    @pytest.mark.parametrize("reader", [get_playlist, playlist_resource])
     def test_forbidden_contents_preserve_readable_metadata(
         self, mock_spotify_api, sample_playlist_data, reader
     ):
@@ -595,21 +595,21 @@ class TestGetPlaylistInfo:
         mock_spotify_api._get.side_effect = error
 
         with pytest.raises(ValueError) as raised:
-            get_playlist_info("37i9dQZF1DX0XUsuxWHRQd")
+            get_playlist("37i9dQZF1DX0XUsuxWHRQd")
         assert raised.value.__cause__ is error
 
     def test_spotify_error(self, mock_spotify_api):
         mock_spotify_api.playlist.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
-            get_playlist_info("badid")
+            get_playlist("badid")
 
 
-class TestGetAlbumInfo:
+class TestGetAlbum:
     def test_success(self, mock_spotify_api, sample_album_data):
         mock_spotify_api.album.return_value = sample_album_data
 
-        result = get_album_info("6XzKGcM6laRkTrME3rQvJw")
+        result = get_album("6XzKGcM6laRkTrME3rQvJw")
 
         assert result.album.name == "Whenever You Need Somebody"
         assert result.album.label == "RCA"
@@ -620,7 +620,7 @@ class TestGetAlbumInfo:
         mock_spotify_api.album.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
-            get_album_info("badid")
+            get_album("badid")
 
 
 class TestCreatePlaylist:
@@ -748,9 +748,9 @@ class TestRemoveTracksFromPlaylist:
         mock_spotify_api._delete.assert_not_called()
 
 
-class TestModifyPlaylistDetails:
+class TestUpdatePlaylistDetails:
     def test_success(self, mock_spotify_api):
-        result = modify_playlist_details("pl1", name="New Name", public=False)
+        result = update_playlist_details("pl1", name="New Name", public=False)
 
         assert result.status == "success"
         mock_spotify_api.playlist_change_details.assert_called_once_with(
@@ -758,7 +758,7 @@ class TestModifyPlaylistDetails:
         )
 
     def test_success_with_description(self, mock_spotify_api):
-        result = modify_playlist_details("pl1", description="new desc")
+        result = update_playlist_details("pl1", description="new desc")
 
         assert result.status == "success"
         mock_spotify_api.playlist_change_details.assert_called_once_with(
@@ -767,20 +767,20 @@ class TestModifyPlaylistDetails:
 
     def test_no_fields_raises(self, mock_spotify_api):
         with pytest.raises(ValueError, match="At least one"):
-            modify_playlist_details("pl1")
+            update_playlist_details("pl1")
 
     def test_spotify_error(self, mock_spotify_api):
         mock_spotify_api.playlist_change_details.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
-            modify_playlist_details("pl1", name="New Name")
+            update_playlist_details("pl1", name="New Name")
 
 
-class TestReorderPlaylistTracks:
+class TestReorderPlaylist:
     def test_moves_block_and_returns_snapshot(self, mock_spotify_api):
         mock_spotify_api._put.return_value = {"snapshot_id": "s3"}
 
-        result = reorder_playlist_tracks(
+        result = reorder_playlist(
             "pl1", range_start=0, insert_before=10, range_length=3
         )
 
@@ -794,7 +794,7 @@ class TestReorderPlaylistTracks:
     def test_defaults_to_single_track(self, mock_spotify_api):
         mock_spotify_api._put.return_value = {"snapshot_id": "s3"}
 
-        result = reorder_playlist_tracks("pl1", range_start=5, insert_before=0)
+        result = reorder_playlist("pl1", range_start=5, insert_before=0)
 
         assert "Moved 1 track" in result.message
         mock_spotify_api._put.assert_called_once_with(
@@ -805,9 +805,7 @@ class TestReorderPlaylistTracks:
     def test_passes_snapshot_id(self, mock_spotify_api):
         mock_spotify_api._put.return_value = {"snapshot_id": "s4"}
 
-        reorder_playlist_tracks(
-            "pl1", range_start=1, insert_before=4, snapshot_id="prev"
-        )
+        reorder_playlist("pl1", range_start=1, insert_before=4, snapshot_id="prev")
 
         mock_spotify_api._put.assert_called_once_with(
             "playlists/pl1/items",
@@ -821,22 +819,20 @@ class TestReorderPlaylistTracks:
 
     def test_negative_position_raises(self, mock_spotify_api):
         with pytest.raises(ValueError, match=">= 0"):
-            reorder_playlist_tracks("pl1", range_start=-1, insert_before=0)
+            reorder_playlist("pl1", range_start=-1, insert_before=0)
 
     def test_zero_range_length_raises(self, mock_spotify_api):
         with pytest.raises(ValueError, match="range_length"):
-            reorder_playlist_tracks(
-                "pl1", range_start=0, insert_before=1, range_length=0
-            )
+            reorder_playlist("pl1", range_start=0, insert_before=1, range_length=0)
 
     def test_spotify_error(self, mock_spotify_api):
         mock_spotify_api._put.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
-            reorder_playlist_tracks("pl1", range_start=0, insert_before=1)
+            reorder_playlist("pl1", range_start=0, insert_before=1)
 
 
-class TestGetUserPlaylists:
+class TestListPlaylists:
     def test_success(self, mock_spotify_api, sample_playlist_data):
         mock_spotify_api.current_user_playlists.return_value = {
             "items": [sample_playlist_data],
@@ -845,7 +841,7 @@ class TestGetUserPlaylists:
             "offset": 0,
         }
 
-        result = get_user_playlists()
+        result = list_playlists()
 
         assert len(result.items) == 1
         assert isinstance(result.items[0], Playlist)
@@ -857,7 +853,7 @@ class TestGetUserPlaylists:
     def test_limit_clamped(self, mock_spotify_api):
         mock_spotify_api.current_user_playlists.return_value = {"items": []}
 
-        get_user_playlists(limit=999)
+        list_playlists(limit=999)
 
         mock_spotify_api.current_user_playlists.assert_called_once_with(
             limit=50, offset=0
@@ -867,7 +863,7 @@ class TestGetUserPlaylists:
         mock_spotify_api.current_user_playlists.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
-            get_user_playlists()
+            list_playlists()
 
 
 class TestGetPlaylistTracks:

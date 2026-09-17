@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-17 — 0.6.0
+- rename seven tools to match the sibling Cloudflare server, so one set of names covers both:
+  `get_track_info` → `get_tracks`, `get_artist_info` → `get_artist`,
+  `get_album_info` → `get_album`, `get_playlist_info` → `get_playlist`,
+  `get_user_playlists` → `list_playlists`,
+  `modify_playlist_details` → `update_playlist_details`,
+  `reorder_playlist_tracks` → `reorder_playlist`. No aliases: the old names are gone
+
 ## 2026-09-17 — 0.5.0
 - retain artist metadata when Spotify withholds top tracks, without hiding authentication errors (#19)
 - retry search at the restricted 10-result cap only for an actual invalid-limit error;
