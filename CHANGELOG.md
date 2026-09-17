@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-17 — 0.6.1
+- batch every read Spotify allows: `get_tracks` and `get_artist` take up to 50 ids in one
+  request, `get_album` up to 20. `get_artist` returns top tracks, and `get_album` its track
+  list, only for a single-id request — both are per item. A withheld batch route now degrades
+  per kind instead of disabling batching everywhere
+- new `check_saved_tracks` (50), `check_saved_albums` (20) and `check_following_artists` (50):
+  ask what the library already holds in one request instead of paging `get_saved_tracks`.
+  Results are keyed by Spotify id, so a truncated answer errors rather than mis-pairing ids
+- fix library writes: `/me/library` takes its URIs as a query parameter, so the JSON body we
+  sent was rejected with 400 and `save_tracks`/`remove_saved_tracks` only worked via a
+  fallback that pointed at the same route. The legacy branch is now the real `/me/tracks`
+- `unfollow_playlist` goes through the regime fallback instead of the legacy-only route
+- fix `add_to_queue` corrupting `spotify:track:` URIs and share URLs by prefixing them twice
+- stop reporting Spotify outages as quota exhaustion: spotipy raises 429 "Max Retries" when
+  it exhausts 5xx retries, which is now classified as unavailable. 410 is reported as a
+  withdrawn capability, and an insufficient-scope 403 is keyed off Spotify's `reason`
+
 ## 2026-09-17 — 0.6.0
 - rename seven tools to match the sibling Cloudflare server, so one set of names covers both:
   `get_track_info` → `get_tracks`, `get_artist_info` → `get_artist`,

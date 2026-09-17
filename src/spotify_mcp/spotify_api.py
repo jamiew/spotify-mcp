@@ -177,41 +177,61 @@ def with_fallback[T](
         return result
 
 
-# /v1/tracks?ids= is withheld from restricted apps (403) while /v1/tracks/{id}
-# still works, so batching has to degrade to per-id reads. This is a different
-# shape from `with_fallback`: there is no alternative batch path to swap in, only
-# a different number of requests. Remember the answer so the 403 is paid once per
-# process instead of on every call.
-_batch_tracks_withheld = False
+# Spotify caps every batch read, and a restricted app can have the batch route
+# withheld entirely (403) while the single-item route keeps working — /v1/tracks?ids=
+# is the known case. This is a different shape from `with_fallback`: there is no
+# alternative path to swap in, only a different number of requests. Remember a
+# withheld kind so the 403 is paid once per process instead of on every call.
+BATCH_LIMITS: dict[str, int] = {"track": 50, "artist": 50, "album": 20}
+_batch_withheld: set[str] = set()
 
 
-def get_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> list[dict]:
-    """Read several tracks, per-id if the batch endpoint is withheld."""
-    global _batch_tracks_withheld
-
-    ids = [to_id(t) for t in track_ids]
+def _batch_read(
+    kind: str,
+    ids: list[str],
+    *,
+    batch: Callable[[list[str]], dict],
+    single: Callable[[str], dict],
+) -> list[dict]:
+    """Read several objects of one kind, per-id when the batch route is withheld."""
+    wanted = [to_id(i) for i in ids]
     # One id never needs the batch route, and asking for it would trade a working
     # request for a guaranteed 403 on restricted apps.
-    if len(ids) == 1:
-        return [sp.track(ids[0])]
+    if len(wanted) == 1:
+        return [single(wanted[0])]
 
-    if not _batch_tracks_withheld:
+    if kind not in _batch_withheld:
         try:
-            result = sp.tracks(ids)
-            return [t for t in (result.get("tracks") or []) if t]
+            result = batch(wanted)
+            return [obj for obj in (result.get(f"{kind}s") or []) if obj]
         except SpotifyException as e:
             if e.http_status != 403:
                 raise
             # A failed fallback does not prove the batch endpoint is withheld.
-            tracks = [sp.track(i) for i in ids]
-            _batch_tracks_withheld = True
+            items = [single(i) for i in wanted]
+            _batch_withheld.add(kind)
             logging.getLogger(__name__).info(
-                f"Spotify withheld batch track reads (HTTP {e.http_status}); "
-                f"falling back to one request per track"
+                f"Spotify withheld batch {kind} reads (HTTP {e.http_status}); "
+                f"falling back to one request per {kind}"
             )
-            return tracks
+            return items
 
-    return [sp.track(i) for i in ids]
+    return [single(i) for i in wanted]
+
+
+def get_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> list[dict]:
+    """Read several tracks in one request where Spotify allows it."""
+    return _batch_read("track", track_ids, batch=sp.tracks, single=sp.track)
+
+
+def get_artists(sp: spotipy.Spotify, artist_ids: list[str]) -> list[dict]:
+    """Read several artists in one request where Spotify allows it."""
+    return _batch_read("artist", artist_ids, batch=sp.artists, single=sp.artist)
+
+
+def get_albums(sp: spotipy.Spotify, album_ids: list[str]) -> list[dict]:
+    """Read several albums in one request where Spotify allows it."""
+    return _batch_read("album", album_ids, batch=sp.albums, single=sp.album)
 
 
 def playlist_items(
@@ -302,27 +322,73 @@ def playlist_reorder_items(
     )
 
 
+# /me/library takes its URIs as a query parameter: a JSON body is rejected with
+# 400 "Missing required field: uris" (verified live). The legacy routes keep
+# taking a JSON body of bare ids.
 def save_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> None:
     """Restricted consolidated library writes onto /me/library, keyed by URI."""
     ids = [to_id(t) for t in track_ids]
+    uris = ",".join(to_uri("track", i) for i in ids)
     with_fallback(
         "library-write",
-        lambda: sp._put(
-            "me/library", payload={"uris": [to_uri("track", i) for i in ids]}
-        ),
-        lambda: sp.current_user_saved_tracks_add(tracks=ids),
+        lambda: sp._put("me/library", uris=uris),
+        lambda: sp._put("me/tracks", payload={"ids": ids}),
     )
 
 
 def remove_saved_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> None:
     ids = [to_id(t) for t in track_ids]
+    uris = ",".join(to_uri("track", i) for i in ids)
     with_fallback(
         "library-write",
-        lambda: sp._delete(
-            "me/library", payload={"uris": [to_uri("track", i) for i in ids]}
-        ),
-        lambda: sp.current_user_saved_tracks_delete(tracks=ids),
+        lambda: sp._delete("me/library", uris=uris),
+        lambda: sp._delete("me/tracks", payload={"ids": ids}),
     )
+
+
+def unfollow_playlist(sp: spotipy.Spotify, playlist_id: str) -> None:
+    """Restricted folds playlist follows into /me/library; legacy has its own route."""
+    pid = to_id(playlist_id)
+    with_fallback(
+        "library-write",
+        lambda: sp._delete("me/library", uris=to_uri("playlist", pid)),
+        lambda: sp._delete(f"playlists/{pid}/followers"),
+    )
+
+
+def saved_tracks_contains(sp: spotipy.Spotify, track_ids: list[str]) -> list[bool]:
+    """Which of these tracks are already in the library, one request for up to 50."""
+    ids = [to_id(t) for t in track_ids]
+    uris = ",".join(to_uri("track", i) for i in ids)
+    joined = ",".join(ids)
+    return with_fallback(
+        "library-read",
+        lambda: sp._get("me/library/contains", uris=uris),
+        lambda: sp._get("me/tracks/contains", ids=joined),
+    )
+
+
+def saved_albums_contains(sp: spotipy.Spotify, album_ids: list[str]) -> list[bool]:
+    """Which of these albums are already saved, one request for up to 20."""
+    ids = [to_id(a) for a in album_ids]
+    uris = ",".join(to_uri("album", i) for i in ids)
+    joined = ",".join(ids)
+    return with_fallback(
+        "library-read",
+        lambda: sp._get("me/library/contains", uris=uris),
+        lambda: sp._get("me/albums/contains", ids=joined),
+    )
+
+
+def following_artists_contains(
+    sp: spotipy.Spotify, artist_ids: list[str]
+) -> list[bool]:
+    """Which of these artists the user follows. Follows are not part of /me/library."""
+    ids = [to_id(a) for a in artist_ids]
+    result: list[bool] = sp._get(
+        "me/following/contains", type="artist", ids=",".join(ids)
+    )
+    return result
 
 
 # Search page size is regime-dependent: legacy apps get 50, restricted apps get

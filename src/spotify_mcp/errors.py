@@ -109,6 +109,18 @@ class SpotifyMCPError(Exception):
                 "don't retry, wait it out",
             )
 
+        # spotipy raises SpotifyException(429, -1, "… Max Retries") when urllib3
+        # exhausts its retries, whatever status was actually retried. We only retry
+        # 500/502/503/504, so this is an outage, not a quota problem — reporting it
+        # as rate limiting sends the caller off to back off on the wrong thing.
+        if status_code == 429 and error_message.rstrip().endswith("Max Retries"):
+            return cls(
+                SpotifyMCPErrorCode.API_UNAVAILABLE,
+                "Spotify API is temporarily unavailable (retries exhausted)",
+                {"http_status": status_code, "retries_exhausted": True},
+                "Try again in a few minutes",
+            )
+
         # Map HTTP status codes to our error codes
         if status_code == 401:
             if "token expired" in error_message.lower():
@@ -134,12 +146,14 @@ class SpotifyMCPError(Exception):
                     {"http_status": status_code},
                     "Upgrade to Spotify Premium to use playback features",
                 )
-            elif "scope" in error_message.lower():
+            # `reason` is exact where matching the prose is a guess; spotipy also
+            # prefixes the message with the request URL, which can contain "scope".
+            elif reason == "INSUFFICIENT_SCOPE" or "scope" in error_message.lower():
                 return cls(
                     SpotifyMCPErrorCode.INSUFFICIENT_SCOPE,
                     "Insufficient permissions for this operation",
-                    {"http_status": status_code},
-                    "Re-authenticate with required scopes",
+                    {"http_status": status_code, "reason": reason},
+                    "Delete the token cache and re-authenticate to pick up new scopes",
                 )
             else:
                 return cls(
@@ -179,6 +193,16 @@ class SpotifyMCPError(Exception):
                 f"Wait {retry_after}s before retrying"
                 if retry_after
                 else "Wait a moment before making more requests",
+            )
+
+        elif status_code == 410:
+            # 410 is what the Feb 2026 withdrawals return: the route existed and
+            # is gone, which is a different fix from a wrong id.
+            return cls(
+                SpotifyMCPErrorCode.API_UNAVAILABLE,
+                "Spotify no longer offers this capability to third-party apps",
+                {"http_status": status_code, "reason": reason},
+                "Run /spotify-api-watch to check for upstream changes",
             )
 
         elif status_code and status_code >= 500:

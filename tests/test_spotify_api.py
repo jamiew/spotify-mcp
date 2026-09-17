@@ -167,9 +167,9 @@ class TestGetTracks:
 
     @pytest.fixture(autouse=True)
     def _reset_withheld(self):
-        spotify_api._batch_tracks_withheld = False
+        spotify_api._batch_withheld.clear()
         yield
-        spotify_api._batch_tracks_withheld = False
+        spotify_api._batch_withheld.clear()
 
     def test_a_single_id_never_uses_the_batch_route(self):
         sp = MagicMock()
@@ -249,6 +249,29 @@ class TestGetTracks:
         get_tracks(sp, ["spotify:track:t1", "t2"])
 
         sp.tracks.assert_called_once_with(["t1", "t2"])
+
+    def test_a_withheld_kind_does_not_disable_the_others(self):
+        sp = MagicMock()
+        sp.tracks.side_effect = self.FORBIDDEN
+        sp.track.side_effect = [{"id": "t1"}, {"id": "t2"}]
+        sp.artists.return_value = {"artists": [{"id": "a1"}, {"id": "a2"}]}
+
+        get_tracks(sp, ["t1", "t2"])
+
+        # tracks degraded, but artists must still be read in one request
+        assert spotify_api.get_artists(sp, ["a1", "a2"]) == [{"id": "a1"}, {"id": "a2"}]
+        sp.artists.assert_called_once_with(["a1", "a2"])
+        sp.artist.assert_not_called()
+
+    def test_albums_batch_through_the_album_route(self):
+        sp = MagicMock()
+        sp.albums.return_value = {"albums": [{"id": "al1"}, {"id": "al2"}]}
+
+        assert spotify_api.get_albums(sp, ["spotify:album:al1", "al2"]) == [
+            {"id": "al1"},
+            {"id": "al2"},
+        ]
+        sp.albums.assert_called_once_with(["al1", "al2"])
 
 
 class TestSearchLimitCeiling:
@@ -358,31 +381,96 @@ class TestSearchLimitCeiling:
 
 
 class TestLibraryWrites:
+    """The restricted /me/library route takes its URIs as a query parameter; a
+    JSON body answers 400 "Missing required field: uris" against the live API,
+    and the legacy routes take a body of bare ids."""
+
     def test_save_tracks_prefers_the_restricted_library_route(self):
         sp = MagicMock()
 
         save_tracks(sp, ["abc", "spotify:track:def"])
 
         sp._put.assert_called_once_with(
-            "me/library",
-            payload={"uris": ["spotify:track:abc", "spotify:track:def"]},
+            "me/library", uris="spotify:track:abc,spotify:track:def"
         )
 
-    def test_save_tracks_falls_back_to_me_tracks(self):
+    def test_save_tracks_falls_back_to_the_legacy_tracks_route(self):
         sp = MagicMock()
-        sp._put.side_effect = SpotifyException(400, -1, "bad request")
+        sp._put.side_effect = [SpotifyException(400, -1, "bad request"), None]
 
         save_tracks(sp, ["abc"])
 
-        sp.current_user_saved_tracks_add.assert_called_once_with(tracks=["abc"])
+        assert sp._put.call_args_list[-1].args == ("me/tracks",)
+        assert sp._put.call_args_list[-1].kwargs == {"payload": {"ids": ["abc"]}}
 
     def test_remove_saved_tracks_prefers_the_restricted_library_route(self):
         sp = MagicMock()
 
         remove_saved_tracks(sp, ["abc"])
 
-        sp._delete.assert_called_once_with(
-            "me/library", payload={"uris": ["spotify:track:abc"]}
+        sp._delete.assert_called_once_with("me/library", uris="spotify:track:abc")
+
+    def test_remove_saved_tracks_falls_back_to_the_legacy_tracks_route(self):
+        sp = MagicMock()
+        sp._delete.side_effect = [SpotifyException(400, -1, "bad request"), None]
+
+        remove_saved_tracks(sp, ["abc"])
+
+        assert sp._delete.call_args_list[-1].args == ("me/tracks",)
+        assert sp._delete.call_args_list[-1].kwargs == {"payload": {"ids": ["abc"]}}
+
+    def test_unfollow_playlist_falls_back_to_the_followers_route(self):
+        sp = MagicMock()
+        sp._delete.side_effect = [SpotifyException(404, -1, "not served"), None]
+
+        spotify_api.unfollow_playlist(sp, "spotify:playlist:pl1")
+
+        assert [c.args[0] for c in sp._delete.call_args_list] == [
+            "me/library",
+            "playlists/pl1/followers",
+        ]
+
+
+class TestMembershipReads:
+    def test_saved_tracks_contains_prefers_the_restricted_route(self):
+        sp = MagicMock()
+        sp._get.return_value = [True, False]
+
+        assert spotify_api.saved_tracks_contains(sp, ["abc", "def"]) == [True, False]
+
+        sp._get.assert_called_once_with(
+            "me/library/contains", uris="spotify:track:abc,spotify:track:def"
+        )
+
+    def test_saved_tracks_contains_falls_back_to_the_legacy_route(self):
+        sp = MagicMock()
+        sp._get.side_effect = [SpotifyException(400, -1, "bad request"), [True]]
+
+        assert spotify_api.saved_tracks_contains(sp, ["abc"]) == [True]
+
+        assert sp._get.call_args_list[-1].args == ("me/tracks/contains",)
+        assert sp._get.call_args_list[-1].kwargs == {"ids": "abc"}
+
+    def test_saved_albums_contains_uses_the_album_routes(self):
+        sp = MagicMock()
+        sp._get.side_effect = [SpotifyException(400, -1, "bad request"), [False]]
+
+        assert spotify_api.saved_albums_contains(sp, ["spotify:album:al1"]) == [False]
+
+        assert [c.args[0] for c in sp._get.call_args_list] == [
+            "me/library/contains",
+            "me/albums/contains",
+        ]
+
+    def test_following_artists_reads_the_follow_route_only(self):
+        sp = MagicMock()
+        sp._get.return_value = [True]
+
+        assert spotify_api.following_artists_contains(sp, ["a1"]) == [True]
+
+        # Follows are not part of /me/library, so there is no regime fallback here
+        sp._get.assert_called_once_with(
+            "me/following/contains", type="artist", ids="a1"
         )
 
 

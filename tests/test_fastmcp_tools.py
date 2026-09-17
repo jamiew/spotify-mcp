@@ -20,6 +20,9 @@ from spotify_mcp.fastmcp_server import (
     album_resource,
     analyze_large_playlist,
     artist_resource,
+    check_following_artists,
+    check_saved_albums,
+    check_saved_tracks,
     control_playback,
     create_mood_playlist,
     create_playlist,
@@ -431,6 +434,21 @@ class TestQueue:
             "spotify:track:4iV5W9uYEdYUVa79Axb7Rh"
         )
 
+    @pytest.mark.parametrize(
+        "given",
+        [
+            "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
+            "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh",
+        ],
+    )
+    def test_add_to_queue_accepts_uris_and_urls(self, mock_spotify_api, given):
+        # A URI used to be pasted into "spotify:track:" a second time and rejected
+        add_to_queue(given)
+
+        mock_spotify_api.add_to_queue.assert_called_once_with(
+            "spotify:track:4iV5W9uYEdYUVa79Axb7Rh"
+        )
+
     def test_add_to_queue_error(self, mock_spotify_api):
         mock_spotify_api.add_to_queue.side_effect = SPOTIFY_ERROR
 
@@ -504,9 +522,9 @@ class TestGetArtist:
 
         result = get_artist("0gxyHStUsqpMadRV0Di1Qt")
 
-        assert result.artist.name == "Rick Astley"
-        assert result.artist.followers == 1234567
-        assert result.artist.genres == ["dance pop", "new wave pop"]
+        assert [a.name for a in result.artists] == ["Rick Astley"]
+        assert result.artists[0].followers == 1234567
+        assert result.artists[0].genres == ["dance pop", "new wave pop"]
         assert len(result.top_tracks) == 1
         assert result.top_tracks[0].name == "Never Gonna Give You Up"
 
@@ -527,7 +545,7 @@ class TestGetArtist:
 
         result = get_artist("0gxyHStUsqpMadRV0Di1Qt")
 
-        assert result.artist.name == "Rick Astley"
+        assert [a.name for a in result.artists] == ["Rick Astley"]
         assert result.top_tracks == []
 
     @pytest.mark.parametrize("status", [401, 429, 500])
@@ -542,6 +560,32 @@ class TestGetArtist:
         with pytest.raises(ValueError) as raised:
             get_artist("0gxyHStUsqpMadRV0Di1Qt")
         assert raised.value.__cause__ is error
+
+    def test_batches_several_artists_into_one_request(
+        self, mock_spotify_api, sample_artist_data
+    ):
+        second = {**sample_artist_data, "id": "a2", "name": "Second"}
+        mock_spotify_api.artists.return_value = {
+            "artists": [sample_artist_data, second]
+        }
+
+        result = get_artist(["0gxyHStUsqpMadRV0Di1Qt", "a2"])
+
+        assert [a.name for a in result.artists] == ["Rick Astley", "Second"]
+        mock_spotify_api.artists.assert_called_once_with(
+            ["0gxyHStUsqpMadRV0Di1Qt", "a2"]
+        )
+        # top tracks are per artist, so a batch request must not fetch them
+        mock_spotify_api.artist_top_tracks.assert_not_called()
+        assert result.top_tracks == []
+
+    def test_rejects_more_than_fifty_artists(self, mock_spotify_api):
+        with pytest.raises(ValueError, match="Maximum 50"):
+            get_artist([f"a{i}" for i in range(51)])
+
+    def test_rejects_an_empty_list(self, mock_spotify_api):
+        with pytest.raises(ValueError, match="At least one"):
+            get_artist([])
 
 
 class TestGetPlaylist:
@@ -611,9 +655,9 @@ class TestGetAlbum:
 
         result = get_album("6XzKGcM6laRkTrME3rQvJw")
 
-        assert result.album.name == "Whenever You Need Somebody"
-        assert result.album.label == "RCA"
-        assert result.album.total_tracks == 10
+        assert [a.name for a in result.albums] == ["Whenever You Need Somebody"]
+        assert result.albums[0].label == "RCA"
+        assert result.albums[0].total_tracks == 10
         assert len(result.tracks) == 1
 
     def test_spotify_error(self, mock_spotify_api):
@@ -621,6 +665,70 @@ class TestGetAlbum:
 
         with pytest.raises(ValueError):
             get_album("badid")
+
+    def test_batches_several_albums_into_one_request(
+        self, mock_spotify_api, sample_album_data
+    ):
+        second = {**sample_album_data, "id": "al2", "name": "Second"}
+        mock_spotify_api.albums.return_value = {"albums": [sample_album_data, second]}
+
+        result = get_album(["6XzKGcM6laRkTrME3rQvJw", "al2"])
+
+        assert [a.name for a in result.albums] == [
+            "Whenever You Need Somebody",
+            "Second",
+        ]
+        mock_spotify_api.albums.assert_called_once_with(
+            ["6XzKGcM6laRkTrME3rQvJw", "al2"]
+        )
+        # the track list belongs to one album, so a batch request omits it
+        assert result.tracks == []
+
+    def test_rejects_more_than_twenty_albums(self, mock_spotify_api):
+        # Spotify's album batch cap is 20, lower than the 50 for tracks/artists
+        with pytest.raises(ValueError, match="Maximum 20"):
+            get_album([f"al{i}" for i in range(21)])
+
+
+class TestMembershipChecks:
+    def test_saved_tracks_keyed_by_id(self, mock_spotify_api):
+        mock_spotify_api._get.return_value = [True, False]
+
+        result = check_saved_tracks(["abc", "spotify:track:def"])
+
+        assert result.results == {"abc": True, "def": False}
+        assert result.checked == 2
+        mock_spotify_api._get.assert_called_once_with(
+            "me/library/contains", uris="spotify:track:abc,spotify:track:def"
+        )
+
+    def test_saved_albums_cap_is_twenty(self, mock_spotify_api):
+        with pytest.raises(ValueError, match="Maximum 20"):
+            check_saved_albums([f"al{i}" for i in range(21)])
+
+    def test_followed_artists_reads_the_follow_route(self, mock_spotify_api):
+        mock_spotify_api._get.return_value = [True]
+
+        result = check_following_artists(["a1"])
+
+        assert result.results == {"a1": True}
+        mock_spotify_api._get.assert_called_once_with(
+            "me/following/contains", type="artist", ids="a1"
+        )
+
+    def test_a_short_answer_is_an_error_not_a_mis_zip(self, mock_spotify_api):
+        # Spotify answers positionally; a truncated answer must not silently
+        # associate the wrong id with the wrong flag.
+        mock_spotify_api._get.return_value = [True]
+
+        with pytest.raises(ValueError):
+            check_saved_tracks(["abc", "def"])
+
+    def test_spotify_error_becomes_value_error(self, mock_spotify_api):
+        mock_spotify_api._get.side_effect = SPOTIFY_ERROR
+
+        with pytest.raises(ValueError):
+            check_following_artists(["a1"])
 
 
 class TestCreatePlaylist:
@@ -1264,7 +1372,7 @@ class TestSaveTracks:
 
         assert result.status == "success"
         mock_spotify_api._put.assert_called_once_with(
-            "me/library", payload={"uris": ["spotify:track:abc"]}
+            "me/library", uris="spotify:track:abc"
         )
 
     def test_rejects_over_fifty(self, mock_spotify_api):
@@ -1278,7 +1386,7 @@ class TestRemoveSavedTracks:
 
         assert result.status == "success"
         mock_spotify_api._delete.assert_called_once_with(
-            "me/library", payload={"uris": ["spotify:track:abc"]}
+            "me/library", uris="spotify:track:abc"
         )
 
 
@@ -1287,7 +1395,9 @@ class TestUnfollowPlaylist:
         result = unfollow_playlist("spotify:playlist:pl1")
 
         assert result.status == "success"
-        mock_spotify_api.current_user_unfollow_playlist.assert_called_once_with("pl1")
+        mock_spotify_api._delete.assert_called_once_with(
+            "me/library", uris="spotify:playlist:pl1"
+        )
 
 
 class TestGetRecentlyPlayed:

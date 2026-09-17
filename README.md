@@ -36,9 +36,9 @@ of remote-MCP auth on Workers generally.
 | --- | --- |
 | `get_me` | The signed-in user's profile |
 | `search_music` | Search tracks, albums, artists or playlists, with filters and regime-aware page limits |
-| `get_tracks` | Details for up to 50 tracks; individual reads when batching is unavailable |
-| `get_artist` | Artist details plus their top tracks where available |
-| `get_album` | Album details plus its track list |
+| `get_tracks` | Details for up to 50 tracks in one request; individual reads when batching is unavailable |
+| `get_artist` | Details for up to 50 artists in one request; top tracks when you ask for a single artist |
+| `get_album` | Details for up to 20 albums in one request; the track list when you ask for a single album |
 | `get_playback_state` | What's playing now: track, device, progress, shuffle, repeat |
 | `control_playback` | Play, pause, next, previous, seek, volume, shuffle, repeat; best-effort state confirmation |
 | `list_devices` | Available Spotify Connect devices |
@@ -57,6 +57,9 @@ of remote-MCP auth on Workers generally.
 | `get_saved_tracks` | Liked Songs, paginated |
 | `save_tracks` | Like tracks |
 | `remove_saved_tracks` | Unlike tracks |
+| `check_saved_tracks` | Which of up to 50 tracks are already liked, without paging the library |
+| `check_saved_albums` | Which of up to 20 albums are already saved |
+| `check_following_artists` | Which of up to 50 artists the user follows |
 | `get_top_items` | Top artists or tracks over a time range |
 | `get_recently_played` | Recently played tracks with timestamps |
 

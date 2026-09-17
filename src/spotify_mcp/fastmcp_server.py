@@ -33,8 +33,6 @@ if TYPE_CHECKING:
 
     from spotify_mcp.spotify_types import (
         AlbumObject,
-        AlbumRef,
-        ArtistObject,
         PlaylistObject,
         TrackObject,
     )
@@ -57,6 +55,13 @@ bare IDs or spotify: URIs anywhere.
 
 Start from search_music to turn names into IDs. get_playlist_tracks returns zero-based
 positions, which reorder_playlist and remove_tracks_from_playlist need.
+
+Batch where you can: get_tracks and get_artist take up to 50 ids in one request,
+get_album up to 20. Ask what the library already holds with check_saved_tracks (50),
+check_saved_albums (20) or check_following_artists (50) instead of paging
+get_saved_tracks. Quota is counted per developer account, so one batched request
+beats fifty single ones. get_artist returns top tracks, and get_album its track
+list, only when you ask for exactly one id.
 
 Playback tools need Spotify Premium and an open device; if none is active, call
 list_devices then transfer_playback.
@@ -185,17 +190,28 @@ class TrackList(BaseModel):
 
 
 class ArtistInfo(BaseModel):
-    """An artist with their top tracks."""
+    """One or more artists, with top tracks when a single artist was requested."""
 
-    artist: Artist
+    artists: list[Artist]
+    # Only populated for a single-artist request: top tracks are per artist, and
+    # Spotify withholds the endpoint from restricted apps entirely.
     top_tracks: list[Track]
 
 
 class AlbumInfo(BaseModel):
-    """An album with its tracks."""
+    """One or more albums, with the track list when a single album was requested."""
 
-    album: Album
+    albums: list[Album]
+    # Only populated for a single-album request, for the same reason.
     tracks: list[Track]
+
+
+class MembershipStatus(BaseModel):
+    """Whether each requested id is in the user's library, keyed by Spotify id."""
+
+    # Dict rather than a parallel list so a client cannot mis-zip ids to answers.
+    results: dict[str, bool]
+    checked: int
 
 
 class PlaylistList(BaseModel):
@@ -851,13 +867,15 @@ def add_to_queue(track_id: str) -> ActionResult:
     """Add a track to the playback queue.
 
     Args:
-        track_id: Spotify track ID to add to queue
+        track_id: Track ID, spotify:track: URI or open.spotify.com URL
     Returns:
         Status and message
     """
     try:
         logger.info(f"🎵 Adding track {track_id} to queue")
-        spotify_client.add_to_queue(f"spotify:track:{track_id}")
+        # to_uri, not string formatting: a URI or share URL would otherwise be
+        # pasted into `spotify:track:` a second time and rejected.
+        spotify_client.add_to_queue(to_uri("track", track_id))
         return ActionResult(status="success", message="Added track to queue")
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
@@ -966,33 +984,45 @@ def _artist_top_tracks_or_empty(artist_id: str) -> dict:
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def get_artist(artist_id: str) -> ArtistInfo:
-    """Get detailed information about a Spotify artist.
+def get_artist(artist_ids: str | list[str]) -> ArtistInfo:
+    """Get details for one or more Spotify artists, batched into a single request.
 
     Args:
-        artist_id: Spotify artist ID
+        artist_ids: One artist ID/URI, or a list of up to 50. A list costs one
+            Spotify request rather than one per artist.
     Returns:
-        ArtistInfo with the artist and, where the app is allowed to read them,
-        their top tracks. `top_tracks` is empty rather than an error when
-        Spotify withholds that endpoint.
+        ArtistInfo whose `artists` follows the order requested. `top_tracks` is
+        filled only when a single artist was requested, and is empty rather than
+        an error when Spotify withholds that endpoint.
     """
+    ids = [artist_ids] if isinstance(artist_ids, str) else list(artist_ids)
+    limit = spotify_api.BATCH_LIMITS["artist"]
+    if not ids:
+        raise ValueError("At least one artist ID is required")
+    if len(ids) > limit:
+        raise ValueError(f"Maximum {limit} artists per request, got {len(ids)}")
+
     try:
-        logger.info(f"🎤 Getting artist info: {artist_id}")
-        result: ArtistObject = spotify_client.artist(artist_id)
-        top_tracks = _artist_top_tracks_or_empty(artist_id)
+        logger.info(f"🎤 Getting {len(ids)} artist(s)")
+        results = spotify_api.get_artists(spotify_client, ids)
 
-        followers = result.get("followers") or {}
-        artist = Artist(
-            name=result["name"],
-            id=result["id"],
-            genres=result.get("genres", []),
-            popularity=result.get("popularity"),
-            followers=followers.get("total"),
-        )
+        artists = [
+            Artist(
+                name=result["name"],
+                id=result["id"],
+                genres=result.get("genres", []),
+                popularity=result.get("popularity"),
+                followers=(result.get("followers") or {}).get("total"),
+            )
+            for result in results
+        ]
 
-        tracks = [parse_track(track) for track in top_tracks.get("tracks", [])[:10]]
+        tracks: list[Track] = []
+        if len(ids) == 1 and artists:
+            top_tracks = _artist_top_tracks_or_empty(artists[0].id)
+            tracks = [parse_track(t) for t in top_tracks.get("tracks", [])[:10]]
 
-        return ArtistInfo(artist=artist, top_tracks=tracks)
+        return ArtistInfo(artists=artists, top_tracks=tracks)
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
@@ -1435,52 +1465,66 @@ def reorder_playlist(
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def get_album(album_id: str) -> AlbumInfo:
-    """Get detailed information about a Spotify album.
+def get_album(album_ids: str | list[str]) -> AlbumInfo:
+    """Get details for one or more Spotify albums, batched into a single request.
 
     Args:
-        album_id: Spotify album ID
+        album_ids: One album ID/URI, or a list of up to 20 — Spotify's own cap
+            for album batches, which is lower than the 50 for tracks and artists.
 
     Returns:
-        AlbumInfo with album metadata (release_date, label) and its tracks
+        AlbumInfo whose `albums` follows the order requested. `tracks` holds the
+        album's track list only when a single album was requested.
     """
+    ids = [album_ids] if isinstance(album_ids, str) else list(album_ids)
+    limit = spotify_api.BATCH_LIMITS["album"]
+    if not ids:
+        raise ValueError("At least one album ID is required")
+    if len(ids) > limit:
+        raise ValueError(f"Maximum {limit} albums per request, got {len(ids)}")
+
     try:
-        logger.info(f"💿 Getting album info: {album_id}")
-        result: AlbumObject = spotify_client.album(album_id)
+        logger.info(f"💿 Getting {len(ids)} album(s)")
+        results = cast("list[AlbumObject]", spotify_api.get_albums(spotify_client, ids))
 
-        result_artists = result.get("artists", [])
-        album = Album(
-            name=result["name"],
-            id=result["id"],
-            artist=result_artists[0]["name"] if result_artists else "Unknown",
-            artists=[a["name"] for a in result_artists],
-            release_date=result.get("release_date"),
-            release_date_precision=result.get("release_date_precision"),
-            total_tracks=result.get("total_tracks"),
-            album_type=result.get("album_type"),
-            label=result.get("label"),
-            genres=result.get("genres", []),
-            popularity=result.get("popularity"),
-            external_urls=cast("dict[str, str]", result.get("external_urls")),
-        )
-
-        # Parse album tracks
-        tracks = []
-        album_tracks = result.get("tracks") or {}
-        for item in album_tracks.get("items", []):
-            if item:
-                # Album track items don't have album info, add it
-                item["album"] = cast(
-                    "AlbumRef",
-                    {
-                        "name": result["name"],
-                        "id": result["id"],
-                        "release_date": result.get("release_date"),
-                    },
+        albums = []
+        for result in results:
+            result_artists = result.get("artists", [])
+            albums.append(
+                Album(
+                    name=result["name"],
+                    id=result["id"],
+                    artist=result_artists[0]["name"] if result_artists else "Unknown",
+                    artists=[a["name"] for a in result_artists],
+                    release_date=result.get("release_date"),
+                    release_date_precision=result.get("release_date_precision"),
+                    total_tracks=result.get("total_tracks"),
+                    album_type=result.get("album_type"),
+                    label=result.get("label"),
+                    genres=result.get("genres", []),
+                    popularity=result.get("popularity"),
+                    external_urls=cast("dict[str, str]", result.get("external_urls")),
                 )
-                tracks.append(parse_track(item))
+            )
 
-        return AlbumInfo(album=album, tracks=tracks)
+        # Album track items carry no album of their own, so stamp the parent on.
+        tracks = []
+        if len(ids) == 1 and results:
+            parent = results[0]
+            # Typed as list[dict] so the empty-row guard stays reachable: Spotify
+            # sends null items, which the TypedDict shape does not admit.
+            items = cast("list[dict]", (parent.get("tracks") or {}).get("items") or [])
+            for item in items:
+                if not item:
+                    continue
+                item["album"] = {
+                    "name": parent["name"],
+                    "id": parent["id"],
+                    "release_date": parent.get("release_date"),
+                }
+                tracks.append(parse_track(cast("TrackObject", item)))
+
+        return AlbumInfo(albums=albums, tracks=tracks)
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
@@ -1590,6 +1634,113 @@ def remove_saved_tracks(track_ids: list[str]) -> ActionResult:
         raise convert_spotify_error(e) from e
 
 
+def _membership(
+    kind: str, ids: list[str], read: Callable[[list[str]], list[bool]]
+) -> MembershipStatus:
+    """Ask Spotify which ids are already in the library, in one request."""
+    limit = spotify_api.BATCH_LIMITS[kind]
+    if not ids:
+        raise ValueError(f"At least one {kind} ID is required")
+    if len(ids) > limit:
+        raise ValueError(f"Maximum {limit} {kind} IDs per request, got {len(ids)}")
+
+    logger.info(f"🔎 Checking {len(ids)} {kind}(s) against the library")
+    flags = read(ids)
+    # Spotify answers positionally; key by the id it answered for so the caller
+    # cannot mis-zip the two lists.
+    return MembershipStatus(
+        results={to_id(i): bool(flag) for i, flag in zip(ids, flags, strict=True)},
+        checked=len(ids),
+    )
+
+
+@mcp.tool(
+    title="Check Liked Songs",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def check_saved_tracks(track_ids: list[str]) -> MembershipStatus:
+    """Check which tracks are already liked, without paging the whole library.
+
+    One request for up to 50 tracks. Use this before save_tracks to skip what is
+    already there, rather than reading get_saved_tracks page by page.
+
+    Args:
+        track_ids: Track IDs or URIs (up to 50)
+    Returns:
+        MembershipStatus.results maps each Spotify track id to true if liked
+    """
+    try:
+        return _membership(
+            "track",
+            track_ids,
+            lambda ids: spotify_api.saved_tracks_contains(spotify_client, ids),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Check Saved Albums",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def check_saved_albums(album_ids: list[str]) -> MembershipStatus:
+    """Check which albums are already saved to the library.
+
+    One request for up to 20 albums — Spotify's cap for albums is lower than the
+    50 it allows for tracks.
+
+    Args:
+        album_ids: Album IDs or URIs (up to 20)
+    Returns:
+        MembershipStatus.results maps each Spotify album id to true if saved
+    """
+    try:
+        return _membership(
+            "album",
+            album_ids,
+            lambda ids: spotify_api.saved_albums_contains(spotify_client, ids),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Check Followed Artists",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def check_following_artists(artist_ids: list[str]) -> MembershipStatus:
+    """Check which artists the user follows. One request for up to 50.
+
+    Artists are followed rather than saved, so this reads follows, not the
+    saved-albums library.
+
+    Args:
+        artist_ids: Artist IDs or URIs (up to 50)
+    Returns:
+        MembershipStatus.results maps each Spotify artist id to true if followed
+    """
+    try:
+        return _membership(
+            "artist",
+            artist_ids,
+            lambda ids: spotify_api.following_artists_contains(spotify_client, ids),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
 @mcp.tool(
     title="Unfollow Playlist",
     annotations=ToolAnnotations(
@@ -1612,7 +1763,7 @@ def unfollow_playlist(playlist_id: str) -> ActionResult:
     """
     try:
         logger.info(f"🚮 Unfollowing playlist {playlist_id}")
-        spotify_client.current_user_unfollow_playlist(to_id(playlist_id))
+        spotify_api.unfollow_playlist(spotify_client, playlist_id)
         return ActionResult(status="success", message="Playlist unfollowed/deleted")
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
