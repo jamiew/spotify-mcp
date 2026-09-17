@@ -4,11 +4,9 @@ mcp-name: io.github.jamiew/spotify-mcp
 
 MCP server connecting Claude with Spotify. This fork of [varunneal/spotify-mcp](https://github.com/varunneal/spotify-mcp) adds smart-batching tools and advanced playlist features that optimize API usage.
 
-This one runs locally over stdio. If you want a **remote** MCP server instead — hosted, OAuth in the
-browser, no local install for the people connecting to it — see
-[jamiew/spotify-mcp-cloudflare](https://github.com/jamiew/spotify-mcp-cloudflare): a sibling Spotify
-MCP on Cloudflare Workers that you can deploy yourself in a few minutes, and a decent worked example
-of remote-MCP auth on Workers generally.
+This server runs locally over stdio. Want a hosted MCP instead? The sister project
+[spotify-mcp-cloudflare](https://github.com/jamiew/spotify-mcp-cloudflare) deploys to Cloudflare
+Workers in a few minutes, with OAuth in the browser and no local install for anyone connecting.
 
 ## Features
 
