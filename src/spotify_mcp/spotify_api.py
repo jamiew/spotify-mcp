@@ -85,6 +85,8 @@ SCOPES = [
     "user-read-playback-position",
     "user-top-read",
     "user-read-recently-played",
+    # Follows
+    "user-follow-read",
     # Profile
     "user-read-private",
     "user-read-email",
@@ -383,12 +385,21 @@ def saved_albums_contains(sp: spotipy.Spotify, album_ids: list[str]) -> list[boo
 def following_artists_contains(
     sp: spotipy.Spotify, artist_ids: list[str]
 ) -> list[bool]:
-    """Which of these artists the user follows. Follows are not part of /me/library."""
+    """Which of these artists the user follows, one request for up to 50.
+
+    Restricted apps are refused me/following/contains outright, so this goes
+    through the same library-read family as the saved-tracks and saved-albums
+    checks: me/library/contains answers for artist URIs too, and agrees with
+    me/following for the same artists.
+    """
     ids = [to_id(a) for a in artist_ids]
-    result: list[bool] = sp._get(
-        "me/following/contains", type="artist", ids=",".join(ids)
+    uris = ",".join(to_uri("artist", i) for i in ids)
+    joined = ",".join(ids)
+    return with_fallback(
+        "library-read",
+        lambda: sp._get("me/library/contains", uris=uris),
+        lambda: sp._get("me/following/contains", type="artist", ids=joined),
     )
-    return result
 
 
 # Search page size is regime-dependent: legacy apps get 50, restricted apps get
