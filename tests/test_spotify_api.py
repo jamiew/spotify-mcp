@@ -13,6 +13,7 @@ from spotipy.exceptions import SpotifyOauthError
 import spotify_mcp.spotify_api as spotify_api
 from spotify_mcp.spotify_api import (
     RETRY_STATUS_CODES,
+    SCOPES,
     Client,
     _legacy_families,
     get_tracks,
@@ -462,16 +463,39 @@ class TestMembershipReads:
             "me/albums/contains",
         ]
 
-    def test_following_artists_reads_the_follow_route_only(self):
+    def test_following_artists_prefers_the_library_route(self):
         sp = MagicMock()
         sp._get.return_value = [True]
 
         assert spotify_api.following_artists_contains(sp, ["a1"]) == [True]
 
-        # Follows are not part of /me/library, so there is no regime fallback here
-        sp._get.assert_called_once_with(
-            "me/following/contains", type="artist", ids="a1"
-        )
+        sp._get.assert_called_once_with("me/library/contains", uris="spotify:artist:a1")
+
+    def test_following_artists_falls_back_to_the_follow_route(self):
+        sp = MagicMock()
+        # A legacy app is rejected by the library route and served by the follow
+        # route; a restricted app is the other way round and never gets here.
+        sp._get.side_effect = [SpotifyException(400, -1, "bad request"), [False]]
+
+        assert spotify_api.following_artists_contains(sp, ["spotify:artist:a1"]) == [
+            False
+        ]
+
+        assert [c.args[0] for c in sp._get.call_args_list] == [
+            "me/library/contains",
+            "me/following/contains",
+        ]
+
+
+class TestScopes:
+    def test_follow_read_scope_is_requested(self):
+        # check_following_artists reads /me/following/contains, which Spotify gates
+        # behind user-follow-read. Without the scope the route answers a bare 403
+        # with no reason, so the tool fails for every app and every regime.
+        assert "user-follow-read" in SCOPES
+
+    def test_every_scope_is_declared_once(self):
+        assert len(SCOPES) == len(set(SCOPES))
 
 
 class TestRetryPolicy:

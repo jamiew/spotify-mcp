@@ -706,14 +706,14 @@ class TestMembershipChecks:
         with pytest.raises(ValueError, match="Maximum 20"):
             check_saved_albums([f"al{i}" for i in range(21)])
 
-    def test_followed_artists_reads_the_follow_route(self, mock_spotify_api):
+    def test_followed_artists_reads_the_library_route(self, mock_spotify_api):
         mock_spotify_api._get.return_value = [True]
 
         result = check_following_artists(["a1"])
 
         assert result.results == {"a1": True}
         mock_spotify_api._get.assert_called_once_with(
-            "me/following/contains", type="artist", ids="a1"
+            "me/library/contains", uris="spotify:artist:a1"
         )
 
     def test_a_short_answer_is_an_error_not_a_mis_zip(self, mock_spotify_api):
