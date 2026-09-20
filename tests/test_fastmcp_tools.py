@@ -706,14 +706,14 @@ class TestMembershipChecks:
         with pytest.raises(ValueError, match="Maximum 20"):
             check_saved_albums([f"al{i}" for i in range(21)])
 
-    def test_followed_artists_reads_the_follow_route(self, mock_spotify_api):
+    def test_followed_artists_reads_consolidated_library(self, mock_spotify_api):
         mock_spotify_api._get.return_value = [True]
 
         result = check_following_artists(["a1"])
 
         assert result.results == {"a1": True}
         mock_spotify_api._get.assert_called_once_with(
-            "me/following/contains", type="artist", ids="a1"
+            "me/library/contains", uris="spotify:artist:a1"
         )
 
     def test_a_short_answer_is_an_error_not_a_mis_zip(self, mock_spotify_api):
@@ -730,17 +730,59 @@ class TestMembershipChecks:
         with pytest.raises(ValueError):
             check_following_artists(["a1"])
 
+    @pytest.mark.parametrize("operation", [check_saved_tracks, check_following_artists])
+    def test_fifty_items_remain_supported(self, mock_spotify_api, operation):
+        mock_spotify_api._get.side_effect = [[False] * 40, [True] * 10]
+
+        result = operation([f"id{i}" for i in range(50)])
+
+        assert result.results == {f"id{i}": i >= 40 for i in range(50)}
+        assert result.checked == 50
+
+    @pytest.mark.parametrize("operation", [check_saved_tracks, check_following_artists])
+    def test_more_than_fifty_is_rejected_before_requests(
+        self, mock_spotify_api, operation
+    ):
+        with pytest.raises(ValueError):
+            operation([f"id{i}" for i in range(51)])
+        mock_spotify_api._get.assert_not_called()
+
+    @pytest.mark.parametrize("operation", [save_tracks, remove_saved_tracks])
+    def test_failed_second_write_chunk_never_reports_success(
+        self, mock_spotify_api, operation
+    ):
+        error = SpotifyException(429, -1, "Quota exceeded", reason="QUOTA_EXCEEDED")
+        method = (
+            mock_spotify_api._put
+            if operation is save_tracks
+            else mock_spotify_api._delete
+        )
+        method.side_effect = [None, error]
+
+        with pytest.raises(ValueError):
+            operation([f"id{i}" for i in range(50)])
+
+        assert method.call_count == 2
+
 
 class TestCreatePlaylist:
-    def test_success(self, mock_spotify_api, sample_playlist_data):
+    def test_private_unless_explicitly_public(
+        self, mock_spotify_api, sample_playlist_data
+    ):
         mock_spotify_api._post.return_value = sample_playlist_data
 
-        result = create_playlist("My Playlist", description="desc", public=False)
+        result = create_playlist("My Playlist", description="desc")
 
         assert result.name == "RapCaviar"
         mock_spotify_api._post.assert_called_once_with(
             "me/playlists",
             payload={"name": "My Playlist", "public": False, "description": "desc"},
+        )
+
+        create_playlist("Shared Playlist", public=True)
+        mock_spotify_api._post.assert_called_with(
+            "me/playlists",
+            payload={"name": "Shared Playlist", "public": True, "description": ""},
         )
 
     def test_spotify_error(self, mock_spotify_api):

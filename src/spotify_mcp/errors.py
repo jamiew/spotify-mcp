@@ -105,8 +105,9 @@ class SpotifyMCPError(Exception):
                 SpotifyMCPErrorCode.API_QUOTA_EXCEEDED,
                 "Spotify API quota exceeded for this developer account",
                 {"http_status": status_code, "reason": reason},
-                "Quota is counted per developer account and resets daily — "
-                "don't retry, wait it out",
+                "Development Mode apps share the developer account's quota. "
+                "Stop automatic retries and check Spotify's quota guidance; "
+                "no reset time is guaranteed",
             )
 
         # spotipy raises SpotifyException(429, -1, "… Max Retries") when urllib3
@@ -153,7 +154,8 @@ class SpotifyMCPError(Exception):
                     SpotifyMCPErrorCode.INSUFFICIENT_SCOPE,
                     "Insufficient permissions for this operation",
                     {"http_status": status_code, "reason": reason},
-                    "Delete the token cache and re-authenticate to pick up new scopes",
+                    "Reauthorize Spotify to grant the required scopes, then restart "
+                    "the server. Do not delete the auth cache automatically",
                 )
             else:
                 return cls(
@@ -196,11 +198,10 @@ class SpotifyMCPError(Exception):
             )
 
         elif status_code == 410:
-            # 410 is what the Feb 2026 withdrawals return: the route existed and
-            # is gone, which is a different fix from a wrong id.
+            # A gone route is not a wrong ID or proof of universal API withdrawal.
             return cls(
                 SpotifyMCPErrorCode.API_UNAVAILABLE,
-                "Spotify no longer offers this capability to third-party apps",
+                "Spotify no longer serves this capability for this app",
                 {"http_status": status_code, "reason": reason},
                 "Run /spotify-api-watch to check for upstream changes",
             )

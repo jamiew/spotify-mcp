@@ -216,13 +216,12 @@ class TestSpotifyReasonIsPreserved:
 
         assert error.code is SpotifyMCPErrorCode.PREMIUM_REQUIRED
 
-    def test_quota_exceeded_tells_you_not_to_retry(self):
+    def test_quota_exceeded_is_keyed_off_reason(self):
         exc = SpotifyException(429, -1, "Too many requests", reason="QUOTA_EXCEEDED")
 
         error = SpotifyMCPError.from_spotify_exception(exc)
 
         assert error.code is SpotifyMCPErrorCode.API_QUOTA_EXCEEDED
-        assert "don't retry" in (error.suggestion or "")
 
     def test_plain_rate_limit_surfaces_retry_after(self):
         exc = SpotifyException(429, -1, "rate limited", headers={"Retry-After": "7"})

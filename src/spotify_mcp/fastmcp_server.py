@@ -66,12 +66,14 @@ list, only when you ask for exactly one id.
 Playback tools need Spotify Premium and an open device; if none is active, call
 list_devices then transfer_playback.
 
-Spotify has withdrawn /recommendations, audio-features and related-artists from
-third-party apps, so there is no recommendation endpoint to call. Build suggestions
-from get_top_items and get_recently_played plus search_music instead.
+Recommendations, audio features and related artists are unavailable to many apps;
+this server does not expose those endpoints. Availability depends on app access,
+not just the SDK. Spotify's AI-input policy applies even without model training.
 
-Newly created playlists may read back as public even when created private; that is
-Spotify's reporting, not a failed write.
+New playlists are private unless public=true is explicitly requested. If Spotify
+reports unexpected visibility, confirm it in the Spotify app.
+Track library writes accept 50 items; membership checks accept 50 tracks/artists
+or 20 albums. Requests use chunks of at most 40. Earlier writes may apply on failure.
 """
 
 # Shared Spotify glyph (inline data URI) attached to the server, tools, resources
@@ -1094,13 +1096,13 @@ def get_playlist(playlist_id: str) -> Playlist:
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-def create_playlist(name: str, description: str = "", public: bool = True) -> Playlist:
+def create_playlist(name: str, description: str = "", public: bool = False) -> Playlist:
     """Create a new Spotify playlist.
 
     Args:
         name: Playlist name
         description: Playlist description (default: empty)
-        public: Whether playlist is public (default: True)
+        public: Whether playlist is public (default: False)
 
     Returns:
         The created Playlist
@@ -1637,7 +1639,7 @@ def remove_saved_tracks(track_ids: list[str]) -> ActionResult:
 def _membership(
     kind: str, ids: list[str], read: Callable[[list[str]], list[bool]]
 ) -> MembershipStatus:
-    """Ask Spotify which ids are already in the library, in one request."""
+    """Ask Spotify which ids are already saved or followed in bounded requests."""
     limit = spotify_api.BATCH_LIMITS[kind]
     if not ids:
         raise ValueError(f"At least one {kind} ID is required")
@@ -1665,8 +1667,8 @@ def _membership(
 def check_saved_tracks(track_ids: list[str]) -> MembershipStatus:
     """Check which tracks are already liked, without paging the whole library.
 
-    One request for up to 50 tracks. Use this before save_tracks to skip what is
-    already there, rather than reading get_saved_tracks page by page.
+    Up to 50 tracks per tool call, split into upstream chunks of at most 40.
+    Use this before save_tracks rather than paging through get_saved_tracks.
 
     Args:
         track_ids: Track IDs or URIs (up to 50)
@@ -1694,8 +1696,7 @@ def check_saved_tracks(track_ids: list[str]) -> MembershipStatus:
 def check_saved_albums(album_ids: list[str]) -> MembershipStatus:
     """Check which albums are already saved to the library.
 
-    One request for up to 20 albums — Spotify's cap for albums is lower than the
-    50 it allows for tracks.
+    Up to 20 albums per tool call, preserving this tool's existing album cap.
 
     Args:
         album_ids: Album IDs or URIs (up to 20)
@@ -1721,10 +1722,10 @@ def check_saved_albums(album_ids: list[str]) -> MembershipStatus:
 )
 @log_tool_execution
 def check_following_artists(artist_ids: list[str]) -> MembershipStatus:
-    """Check which artists the user follows. One request for up to 50.
+    """Check up to 50 artist follows in upstream chunks of at most 40.
 
-    Artists are followed rather than saved, so this reads follows, not the
-    saved-albums library.
+    Uses artist URIs on the consolidated library route, with a legacy fallback.
+    Requires user-follow-read; reauthorize if your existing grant lacks it.
 
     Args:
         artist_ids: Artist IDs or URIs (up to 50)
@@ -1817,9 +1818,8 @@ def get_top_items(
 ) -> TopItems:
     """Get the user's top artists or tracks over a time range.
 
-    With /recommendations, audio-features and related-artists withdrawn from
-    third-party apps, this is the measured foundation for taste profiling and
-    building suggestions.
+    This remains useful when recommendations or related artists are unavailable
+    to the app. Spotify's policy also restricts analysis and AI ingestion.
 
     Args:
         item_type: 'tracks' or 'artists' (default 'tracks')
@@ -1998,8 +1998,8 @@ def discover_similar(artist: str) -> str:
     """Find artists similar to one you name, without a recommendations endpoint."""
     return f"""Find artists similar to {artist}.
 
-Spotify's related-artists and /recommendations endpoints are gone for third-party
-apps, so work it out from what still exists:
+This server does not expose related-artists or /recommendations; Spotify access
+depends on the app. Subject to Spotify's AI-input policy, use the available tools:
 1. get_artist for their genres
 2. search_music with genre: and year: filters to find neighbours
 3. get_top_items to bias toward what I already listen to — skip anything already

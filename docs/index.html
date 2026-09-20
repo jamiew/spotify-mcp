@@ -557,6 +557,11 @@
                 <strong>search the catalog</strong>, and <strong>manage playlists</strong> —
                 in plain language.
             </p>
+            <p class="install-meta">
+                The Python server remains supported. <a href="https://github.com/jamiew/spotify-mcp-cloudflare">Cloudflare / TypeScript</a>
+                is the canonical development direction for a shared local and hosted core.
+                Its <code>updates</code> PR is not a deployment announcement; tool contracts differ.
+            </p>
             <div class="cta-row" data-reveal style="--d:0.3s">
                 <a class="btn btn-primary" href="#install">
                     Get started
@@ -650,7 +655,7 @@
             <div class="tool-group" data-reveal>
                 <div class="label">Playlists</div>
                 <div class="tool-list">
-                    <div class="tool"><code>create_playlist</code><span>Create new playlists with custom settings</span></div>
+                    <div class="tool"><code>create_playlist</code><span>Create private playlists by default; explicitly opt into public</span></div>
                     <div class="tool"><code>get_playlist</code><span>Playlist metadata and details</span></div>
                     <div class="tool"><code>get_playlist_tracks</code><span>Retrieve tracks with full pagination for large playlists</span></div>
                     <div class="tool"><code>list_playlists</code><span>List all your playlists with pagination</span></div>
@@ -779,6 +784,18 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                 </a>
             </div>
+        </section>
+
+        <section id="compatibility">
+            <div class="section-head">
+                <span class="eyebrow">Before connecting</span>
+                <h2>Supported locally, compatible deliberately.</h2>
+                <p>Python keeps six resources, five prompts and playback confirmation. The sibling updates PR adds local PKCE login, output schemas, search offset, snapshot guards, bulk playlist progress and removal confirmation, but matching names are not matching contracts. Read the <a href="https://github.com/jamiew/spotify-mcp#moving-between-implementations">migration comparison</a> before switching.</p>
+            </div>
+            <p>New playlists are intentionally private by default. Track writes and track/artist checks still accept 50 items per tool call, in upstream chunks of at most 40; album checks remain capped at 20. Failed writes can leave earlier chunks applied. Artist membership needs <code>user-follow-read</code>: restart and reauthorize Spotify for the new scope, without automatically deleting your auth cache.</p>
+            <p>The <a href="https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security">March 9 update</a> postponed endpoint restrictions for existing integrations; Extended Quota Mode is exempt from February's endpoint changes. The <a href="https://developer.spotify.com/documentation/web-api/references/changes/march-2026">March changelog</a> reversed external-ID removal. Access depends on the app, not just the date. The official TypeScript SDK's <a href="https://unpkg.com/@spotify/web-api-ts-sdk@1.2.0/dist/mjs/endpoints/PlaylistsEndpoints.js">1.2.0 playlist code</a> still uses legacy routes; switching SDKs does not remove compatibility work.</p>
+            <p>The <a href="https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates">July quota update</a> permits 25 apps but shares one Development Mode quota per developer account. <code>QUOTA_EXCEEDED</code> is not ordinary rate limiting; no daily or 24-hour reset is guaranteed. <a href="https://developer.spotify.com/documentation/web-api/concepts/quota-modes">Development Mode</a> normally permits five allowlisted users with a Premium owner, with older larger allowlists grandfathered. Extended access requires an organization, established entity, launched service and at least 250,000 monthly active users. Never share a local token cache or treat a public URL as unrestricted hosting permission.</p>
+            <p><strong>AI policy is a separate gate.</strong> <a href="https://developer.spotify.com/policy">Spotify Developer Policy III.14</a> restricts ingesting Spotify Content into AI models, not just training. Metadata-only use is not automatic clearance. Analysis and derived metrics (III.13) and voice-control assistants (III.3) also face restrictions. Seek Spotify clarification or approval before public AI access; this project does not establish permission.</p>
         </section>
 
         <section id="examples">
