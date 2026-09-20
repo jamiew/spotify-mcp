@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026-09-20 — 0.7.0
 - Request `user-follow-read` and prefer artist URIs on `/me/library/contains`, with the
   legacy `/me/following/contains` fallback. Existing users must reauthorize for the scope;
   no auth cache is deleted automatically.
@@ -9,10 +9,10 @@
   and propagate later-chunk errors rather than reporting partial writes as success.
 - **Intentional behavior change:** `create_playlist` is private by default. Explicit
   `public=true` still creates public playlists; existing playlists are unchanged.
-- Declare Pydantic directly; retain `mcp[cli]<2`. No release or version bump in this update.
+- Declare Pydantic directly; retain `mcp[cli]<2`.
 - Document Cloudflare as the canonical local/hosted development direction while keeping
-  Python supported. The sibling `updates` PR is not deployed parity: resources, prompts,
-  playback confirmation and tool contracts still differ.
+  Python supported. Resources, prompts, playback confirmation and tool contracts still differ.
+- Simplify setup documentation and add a README banner made with Glif.
 - Correct Spotify access guidance using the [March 9 postponement](https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security),
   [March external-ID reversal](https://developer.spotify.com/documentation/web-api/references/changes/march-2026),
   and [July 25-app/shared-developer quota update](https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates).
