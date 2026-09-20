@@ -3,6 +3,7 @@
 import json
 import logging
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import requests
@@ -108,6 +109,12 @@ class TestSpotifyClient:
     def test_raises_on_missing_credentials(self):
         with pytest.raises(SpotifyOauthError):
             Client()
+
+    def test_authorization_requests_permission_to_read_artist_follows(self):
+        client = Client()
+        query = parse_qs(urlparse(client.auth_manager.get_authorize_url()).query)
+
+        assert "user-follow-read" in query["scope"][0].split()
 
 
 class TestWithFallback:
@@ -462,16 +469,136 @@ class TestMembershipReads:
             "me/albums/contains",
         ]
 
-    def test_following_artists_reads_the_follow_route_only(self):
+    def test_following_artists_prefers_consolidated_library(self):
         sp = MagicMock()
         sp._get.return_value = [True]
 
-        assert spotify_api.following_artists_contains(sp, ["a1"]) == [True]
+        assert spotify_api.following_artists_contains(sp, ["spotify:artist:a1"]) == [
+            True
+        ]
 
-        # Follows are not part of /me/library, so there is no regime fallback here
-        sp._get.assert_called_once_with(
-            "me/following/contains", type="artist", ids="a1"
+        sp._get.assert_called_once_with("me/library/contains", uris="spotify:artist:a1")
+
+    def test_following_artists_falls_back_with_artist_type_and_bare_ids(self):
+        sp = MagicMock()
+        sp._get.side_effect = [SpotifyException(404, -1, "not served"), [True, False]]
+
+        assert spotify_api.following_artists_contains(
+            sp, ["spotify:artist:a1", "a2"]
+        ) == [True, False]
+        sp._get.assert_called_with("me/following/contains", ids="a1,a2", type="artist")
+
+    def test_insufficient_scope_is_not_hidden_by_a_legacy_retry(self):
+        sp = MagicMock()
+        error = SpotifyException(403, -1, "Forbidden", reason="INSUFFICIENT_SCOPE")
+        sp._get.side_effect = error
+
+        with pytest.raises(SpotifyException) as caught:
+            spotify_api.following_artists_contains(sp, ["a1"])
+
+        assert caught.value is error
+        assert sp._get.call_count == 1
+
+    def test_a_short_chunk_cannot_shift_later_membership_answers(self):
+        sp = MagicMock()
+        sp._get.side_effect = [[True] * 39, [False] * 11]
+
+        with pytest.raises(ValueError):
+            spotify_api.saved_tracks_contains(sp, [f"t{i}" for i in range(50)])
+
+        sp._get.assert_called_once()
+
+
+class TestLibraryHTTP:
+    """Exercise URI query encoding, batch boundaries and errors through Spotipy."""
+
+    def _client(self, respond):
+        session = requests.Session()
+        session.request = MagicMock(side_effect=respond)
+        return spotipy.Spotify(
+            auth="test-token", requests_session=session
+        ), session.request
+
+    @staticmethod
+    def _response(method, url, kwargs, payload, status=200):
+        response = requests.Response()
+        response.status_code = status
+        response.url = (
+            requests.Request(method, url, params=kwargs["params"]).prepare().url
         )
+        response._content = json.dumps(payload).encode()
+        return response
+
+    @pytest.mark.parametrize(
+        ("operation", "method"),
+        [(save_tracks, "PUT"), (remove_saved_tracks, "DELETE")],
+    )
+    @pytest.mark.parametrize("count", [40, 41, 50])
+    def test_writes_preserve_every_uri_within_the_restricted_limit(
+        self, operation, method, count
+    ):
+        received = []
+
+        def respond(actual_method, url, **kwargs):
+            assert actual_method == method
+            assert url.endswith("/me/library")
+            uris = kwargs["params"]["uris"].split(",")
+            assert 1 <= len(uris) <= 40
+            received.extend(uris)
+            return self._response(actual_method, url, kwargs, None)
+
+        sp, request = self._client(respond)
+        operation(sp, [f"spotify:track:t{i}" for i in range(count)])
+
+        assert received == [f"spotify:track:t{i}" for i in range(count)]
+        assert request.call_count == (count + 39) // 40
+
+    @pytest.mark.parametrize(
+        ("kind", "operation", "count"),
+        [
+            ("track", spotify_api.saved_tracks_contains, 50),
+            ("artist", spotify_api.following_artists_contains, 50),
+            ("album", spotify_api.saved_albums_contains, 20),
+        ],
+    )
+    def test_membership_combines_chunks_in_request_order(self, kind, operation, count):
+        received = []
+        expected = [i % 3 == 0 for i in range(count)]
+
+        def respond(method, url, **kwargs):
+            assert method == "GET"
+            assert url.endswith("/me/library/contains")
+            uris = kwargs["params"]["uris"].split(",")
+            assert 1 <= len(uris) <= 40
+            flags = expected[len(received) : len(received) + len(uris)]
+            received.extend(uris)
+            return self._response(method, url, kwargs, flags)
+
+        sp, _ = self._client(respond)
+
+        assert operation(sp, [f"id{i}" for i in range(count)]) == expected
+        assert received == [f"spotify:{kind}:id{i}" for i in range(count)]
+
+    def test_legacy_fallback_chunks_preserve_track_order(self):
+        received = []
+
+        def respond(method, url, **kwargs):
+            if url.endswith("/me/library/contains"):
+                return self._response(
+                    method, url, kwargs, {"error": {"message": "Gone"}}, 404
+                )
+            assert url.endswith("/me/tracks/contains")
+            ids = kwargs["params"]["ids"].split(",")
+            received.extend(ids)
+            return self._response(method, url, kwargs, [i == "id40" for i in ids])
+
+        sp, request = self._client(respond)
+
+        flags = spotify_api.saved_tracks_contains(sp, [f"id{i}" for i in range(50)])
+
+        assert flags == [i == 40 for i in range(50)]
+        assert received == [f"id{i}" for i in range(50)]
+        assert request.call_count == 3
 
 
 class TestRetryPolicy:

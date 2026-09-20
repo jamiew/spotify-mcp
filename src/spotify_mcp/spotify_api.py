@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import tomllib
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -81,6 +82,8 @@ SCOPES = [
     # Library
     "user-library-read",
     "user-library-modify",
+    # Artist follows (including the consolidated library membership route)
+    "user-follow-read",
     # History
     "user-read-playback-position",
     "user-top-read",
@@ -325,25 +328,31 @@ def playlist_reorder_items(
 # /me/library takes its URIs as a query parameter: a JSON body is rejected with
 # 400 "Missing required field: uris" (verified live). The legacy routes keep
 # taking a JSON body of bare ids.
+_LIBRARY_BATCH_LIMIT = 40
+
+
 def save_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> None:
-    """Restricted consolidated library writes onto /me/library, keyed by URI."""
-    ids = [to_id(t) for t in track_ids]
-    uris = ",".join(to_uri("track", i) for i in ids)
-    with_fallback(
-        "library-write",
-        lambda: sp._put("me/library", uris=uris),
-        lambda: sp._put("me/tracks", payload={"ids": ids}),
-    )
+    """Save up to 50 tracks in bounded requests; propagate any failed chunk."""
+    for start in range(0, len(track_ids), _LIBRARY_BATCH_LIMIT):
+        ids = [to_id(t) for t in track_ids[start : start + _LIBRARY_BATCH_LIMIT]]
+        uris = ",".join(to_uri("track", i) for i in ids)
+        with_fallback(
+            "library-write",
+            partial(sp._put, "me/library", uris=uris),
+            partial(sp._put, "me/tracks", payload={"ids": ids}),
+        )
 
 
 def remove_saved_tracks(sp: spotipy.Spotify, track_ids: list[str]) -> None:
-    ids = [to_id(t) for t in track_ids]
-    uris = ",".join(to_uri("track", i) for i in ids)
-    with_fallback(
-        "library-write",
-        lambda: sp._delete("me/library", uris=uris),
-        lambda: sp._delete("me/tracks", payload={"ids": ids}),
-    )
+    """Remove up to 50 tracks in bounded requests; earlier chunks are not rolled back."""
+    for start in range(0, len(track_ids), _LIBRARY_BATCH_LIMIT):
+        ids = [to_id(t) for t in track_ids[start : start + _LIBRARY_BATCH_LIMIT]]
+        uris = ",".join(to_uri("track", i) for i in ids)
+        with_fallback(
+            "library-write",
+            partial(sp._delete, "me/library", uris=uris),
+            partial(sp._delete, "me/tracks", payload={"ids": ids}),
+        )
 
 
 def unfollow_playlist(sp: spotipy.Spotify, playlist_id: str) -> None:
@@ -356,39 +365,45 @@ def unfollow_playlist(sp: spotipy.Spotify, playlist_id: str) -> None:
     )
 
 
+def _library_contains(
+    sp: spotipy.Spotify, kind: str, item_ids: list[str]
+) -> list[bool]:
+    """Combine bounded membership reads without shifting incomplete answers."""
+    results: list[bool] = []
+    for start in range(0, len(item_ids), _LIBRARY_BATCH_LIMIT):
+        ids = [to_id(i) for i in item_ids[start : start + _LIBRARY_BATCH_LIMIT]]
+        uris = ",".join(to_uri(kind, i) for i in ids)
+        legacy_path = f"me/{kind}s/contains"
+        legacy_params = {"ids": ",".join(ids)}
+        if kind == "artist":
+            legacy_path = "me/following/contains"
+            legacy_params["type"] = "artist"
+        flags: list[bool] = with_fallback(
+            "library-read",
+            partial(sp._get, "me/library/contains", uris=uris),
+            partial(sp._get, legacy_path, **legacy_params),
+        )
+        if len(flags) != len(ids):
+            raise ValueError("Spotify returned an incomplete membership response")
+        results.extend(flags)
+    return results
+
+
 def saved_tracks_contains(sp: spotipy.Spotify, track_ids: list[str]) -> list[bool]:
-    """Which of these tracks are already in the library, one request for up to 50."""
-    ids = [to_id(t) for t in track_ids]
-    uris = ",".join(to_uri("track", i) for i in ids)
-    joined = ",".join(ids)
-    return with_fallback(
-        "library-read",
-        lambda: sp._get("me/library/contains", uris=uris),
-        lambda: sp._get("me/tracks/contains", ids=joined),
-    )
+    """Which tracks are saved, with at most 40 URIs per upstream request."""
+    return _library_contains(sp, "track", track_ids)
 
 
 def saved_albums_contains(sp: spotipy.Spotify, album_ids: list[str]) -> list[bool]:
-    """Which of these albums are already saved, one request for up to 20."""
-    ids = [to_id(a) for a in album_ids]
-    uris = ",".join(to_uri("album", i) for i in ids)
-    joined = ",".join(ids)
-    return with_fallback(
-        "library-read",
-        lambda: sp._get("me/library/contains", uris=uris),
-        lambda: sp._get("me/albums/contains", ids=joined),
-    )
+    """Which of up to 20 albums are saved, preserving requested order."""
+    return _library_contains(sp, "album", album_ids)
 
 
 def following_artists_contains(
     sp: spotipy.Spotify, artist_ids: list[str]
 ) -> list[bool]:
-    """Which of these artists the user follows. Follows are not part of /me/library."""
-    ids = [to_id(a) for a in artist_ids]
-    result: list[bool] = sp._get(
-        "me/following/contains", type="artist", ids=",".join(ids)
-    )
-    return result
+    """Check artist follows through consolidated library or legacy follow routes."""
+    return _library_contains(sp, "artist", artist_ids)
 
 
 # Search page size is regime-dependent: legacy apps get 50, restricted apps get

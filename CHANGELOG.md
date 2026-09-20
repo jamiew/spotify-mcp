@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+- Request `user-follow-read` and prefer artist URIs on `/me/library/contains`, with the
+  legacy `/me/following/contains` fallback. Existing users must reauthorize for the scope;
+  no auth cache is deleted automatically.
+- Preserve 50-item track writes and track/artist checks by chunking upstream requests at
+  40; album checks remain capped at 20. Preserve membership order, reject incomplete chunks,
+  and propagate later-chunk errors rather than reporting partial writes as success.
+- **Intentional behavior change:** `create_playlist` is private by default. Explicit
+  `public=true` still creates public playlists; existing playlists are unchanged.
+- Declare Pydantic directly; retain `mcp[cli]<2`. No release or version bump in this update.
+- Document Cloudflare as the canonical local/hosted development direction while keeping
+  Python supported. The sibling `updates` PR is not deployed parity: resources, prompts,
+  playback confirmation and tool contracts still differ.
+- Correct Spotify access guidance using the [March 9 postponement](https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security),
+  [March external-ID reversal](https://developer.spotify.com/documentation/web-api/references/changes/march-2026),
+  and [July 25-app/shared-developer quota update](https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates).
+  Preserve `QUOTA_EXCEEDED` without an unsupported daily-reset promise. Explain the
+  [five-user/organization extended-access constraints](https://developer.spotify.com/documentation/web-api/concepts/quota-modes),
+  official SDK legacy-route caveat, and [AI ingestion policy](https://developer.spotify.com/policy)
+  beyond training.
+
 ## 2026-09-17 — 0.6.1
 - batch every read Spotify allows: `get_tracks` and `get_artist` take up to 50 ids in one
   request, `get_album` up to 20. `get_artist` returns top tracks, and `get_album` its track
@@ -67,9 +88,9 @@ is renamed `search_music` since it always searched more than tracks.
   `get_top_items`
 - `control_playback` gains seek, volume, shuffle, repeat, `context_uri` and
   `device_id` — none of which were reachable before
-- `get_top_items` + `get_recently_played` are the measured replacement for the
-  withdrawn `/recommendations` endpoint, with a `discover_similar` prompt as the
-  stopgap and a `taste_profile` prompt alongside it
+- `get_top_items` + `get_recently_played` support discovery when `/recommendations` is
+  unavailable to the app, with a `discover_similar` prompt and a `taste_profile` prompt.
+  Access restrictions are app-dependent, not a universal endpoint withdrawal.
 - Feb 2026 regime fallback: playlist and library writes try the restricted
   endpoint shape and fall back to the legacy one per family, so the server keeps
   working whichever regime Spotify serves the app
