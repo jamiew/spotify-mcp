@@ -26,7 +26,7 @@ from spotify_mcp.logging_utils import (
     log_pagination_info,
     log_tool_execution,
 )
-from spotify_mcp.utils import to_id, to_playable_uri, to_uri
+from spotify_mcp.utils import to_id, to_playable_uri
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1335,14 +1335,15 @@ def create_playlist(name: str, description: str = "", public: bool = False) -> P
 )
 @log_tool_execution
 def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> ActionResult:
-    """Add tracks to a playlist.
+    """Add tracks or podcast episodes to a playlist.
 
     Args:
         playlist_id: Playlist ID
-        track_uris: List of track URIs (up to 100)
+        track_uris: Track or episode URIs/URLs (up to 100). Bare IDs are tracks;
+            pass spotify:episode: URIs or episode URLs for episodes.
     """
     try:
-        uris = [to_uri("track", uri) for uri in track_uris]
+        uris = [to_playable_uri(uri) for uri in track_uris]
 
         logger.info(f"🎧 Adding {len(uris)} tracks to playlist {playlist_id}")
         result = spotify_api.playlist_add_items(spotify_client, playlist_id, uris)
@@ -1493,14 +1494,14 @@ async def get_playlist_tracks(
 async def remove_tracks_from_playlist(
     playlist_id: str, track_uris: list[str], ctx: Context | None = None
 ) -> ActionResult:
-    """Remove tracks from a playlist.
+    """Remove tracks or podcast episodes from a playlist.
 
     Args:
         playlist_id: Playlist ID
-        track_uris: List of track URIs to remove
+        track_uris: Track or episode URIs/URLs to remove. Bare IDs are tracks.
     """
     try:
-        uris = [to_uri("track", uri) for uri in track_uris]
+        uris = [to_playable_uri(uri) for uri in track_uris]
 
         # Confirm this destructive op, but only when the client actually
         # advertises elicitation support. If it doesn't, proceed so this core

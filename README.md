@@ -92,8 +92,8 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 | `get_playlist_tracks` | Read playlist tracks with pagination |
 | `create_playlist` | Create a private playlist; set `public=true` to publish |
 | `update_playlist_details` | Change name, description, or visibility |
-| `add_tracks_to_playlist` | Add up to 100 tracks |
-| `remove_tracks_from_playlist` | Remove tracks with confirmation where supported |
+| `add_tracks_to_playlist` | Add up to 100 tracks or episodes |
+| `remove_tracks_from_playlist` | Remove tracks or episodes with confirmation where supported |
 | `reorder_playlist` | Move a block of tracks |
 | `follow_playlist` | Follow (save) a playlist |
 | `unfollow_playlist` | Unfollow a playlist, including your own |

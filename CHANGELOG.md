@@ -5,6 +5,9 @@
   episode share URLs were coerced into `spotify:track:` URIs and rejected by Spotify. Bare
   IDs are still treated as tracks; an album, show or playlist passed as an item is refused
   with a pointer to `context_uri`. Show, album and playlist context URIs pass through as before.
+- `add_tracks_to_playlist` and `remove_tracks_from_playlist` keep episode URIs and episode
+  share URLs too, on both the `/items` and the legacy `/tracks` routes. Bare IDs are still
+  tracks.
 - Request the `user-follow-modify` scope, which the `/me/library` writes and the legacy
   follow routes need for artist and playlist follows. **Existing users must reauthorize**:
   restart the server and complete Spotify consent again. No auth cache is deleted

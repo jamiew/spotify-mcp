@@ -877,6 +877,46 @@ class TestAddTracksToPlaylist:
             payload={"uris": ["spotify:track:rawid", "spotify:track:already"]},
         )
 
+    def test_keeps_episode_uris_and_urls(self, mock_spotify_api):
+        # Episodes used to be coerced into spotify:track: URIs and rejected
+        mock_spotify_api._post.return_value = {"snapshot_id": "s1"}
+
+        add_tracks_to_playlist(
+            "pl1",
+            ["spotify:episode:ep1", "https://open.spotify.com/episode/ep2?si=x", "t1"],
+        )
+
+        mock_spotify_api._post.assert_called_once_with(
+            "playlists/pl1/items",
+            payload={
+                "uris": [
+                    "spotify:episode:ep1",
+                    "spotify:episode:ep2",
+                    "spotify:track:t1",
+                ]
+            },
+        )
+
+    def test_legacy_apps_get_episode_uris_on_the_tracks_route(self, mock_spotify_api):
+        mock_spotify_api._post.side_effect = [
+            SpotifyException(404, -1, "not served"),
+            {"snapshot_id": "s1"},
+        ]
+
+        add_tracks_to_playlist("pl1", ["spotify:episode:ep1"])
+
+        assert mock_spotify_api._post.call_args_list[-1].args == (
+            "playlists/pl1/tracks",
+        )
+        assert mock_spotify_api._post.call_args_list[-1].kwargs == {
+            "payload": {"uris": ["spotify:episode:ep1"]}
+        }
+
+    def test_rejects_a_non_playable_uri_before_any_request(self, mock_spotify_api):
+        with pytest.raises(ValueError, match="album"):
+            add_tracks_to_playlist("pl1", ["spotify:album:al1"])
+        mock_spotify_api._post.assert_not_called()
+
     def test_empty_list(self, mock_spotify_api):
         mock_spotify_api._post.return_value = {"snapshot_id": "s1"}
 
@@ -892,6 +932,37 @@ class TestAddTracksToPlaylist:
 
 
 class TestRemoveTracksFromPlaylist:
+    async def test_keeps_episode_uris(self, mock_spotify_api):
+        mock_spotify_api._delete.return_value = {"snapshot_id": "s2"}
+
+        await remove_tracks_from_playlist(
+            "pl1", ["https://open.spotify.com/episode/ep1", "t1"]
+        )
+
+        mock_spotify_api._delete.assert_called_once_with(
+            "playlists/pl1/items",
+            payload={
+                "items": [{"uri": "spotify:episode:ep1"}, {"uri": "spotify:track:t1"}]
+            },
+        )
+
+    async def test_legacy_apps_get_episode_uris_on_the_tracks_route(
+        self, mock_spotify_api
+    ):
+        mock_spotify_api._delete.side_effect = [
+            SpotifyException(404, -1, "not served"),
+            {"snapshot_id": "s2"},
+        ]
+
+        await remove_tracks_from_playlist("pl1", ["spotify:episode:ep1"])
+
+        assert mock_spotify_api._delete.call_args_list[-1].args == (
+            "playlists/pl1/tracks",
+        )
+        assert mock_spotify_api._delete.call_args_list[-1].kwargs == {
+            "payload": {"tracks": [{"uri": "spotify:episode:ep1"}]}
+        }
+
     async def test_converts_ids_and_uris(self, mock_spotify_api):
         mock_spotify_api._delete.return_value = {"snapshot_id": "s2"}
 
