@@ -68,7 +68,7 @@ Do not automatically delete the auth cache.
 
 ## Features
 
-28 tools, six resources (user, playback, track, playlist, artist, album), and five prompts.
+35 tools, six resources (user, playback, track, playlist, artist, album), and five prompts.
 Tools provide typed outputs and behavior annotations; large playlist reads report progress.
 Playlist removal asks for confirmation where supported, reordering uses snapshot guards,
 and playback control attempts best-effort read-after-write confirmation, not guaranteed success.
@@ -95,6 +95,7 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 | `add_tracks_to_playlist` | Add up to 100 tracks |
 | `remove_tracks_from_playlist` | Remove tracks with confirmation where supported |
 | `reorder_playlist` | Move a block of tracks |
+| `follow_playlist` | Follow (save) a playlist |
 | `unfollow_playlist` | Unfollow a playlist, including your own |
 | `get_saved_tracks` | Read Liked Songs with pagination |
 | `save_tracks` | Like tracks |
@@ -102,6 +103,12 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 | `check_saved_tracks` | Check up to 50 tracks against Liked Songs |
 | `check_saved_albums` | Check up to 20 saved albums |
 | `check_following_artists` | Check up to 50 followed artists |
+| `get_saved_albums` | Read saved albums with pagination |
+| `save_albums` | Save up to 20 albums |
+| `remove_saved_albums` | Remove up to 20 saved albums |
+| `get_followed_artists` | Read followed artists with cursor pagination |
+| `follow_artists` | Follow up to 50 artists |
+| `unfollow_artists` | Unfollow up to 50 artists |
 | `get_top_items` | Read top artists or tracks over a time range |
 | `get_recently_played` | Read recently played tracks with timestamps |
 
@@ -109,8 +116,9 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 
 - **New playlists default to private.** Existing playlists are unchanged. Spotify can report
   unexpected visibility, so confirm sensitive playlists in the Spotify app.
-- Track saves/removals and track/artist membership checks accept **50 items**, sent upstream
-  in batches of **40**. Album checks accept **20**. Membership results preserve input
+- Library writes (tracks, artist follows) and track/artist membership checks accept
+  **50 items**, sent upstream in batches of **40**. Album saves, removals and checks
+  accept **20**. Membership results preserve input
   alignment; incomplete chunks fail. Writes are not atomic across chunks: earlier changes
   may remain after an error. Check membership before retrying.
 - Restricted apps cap search pages at **10**. Advance by the returned `offset + limit`, not

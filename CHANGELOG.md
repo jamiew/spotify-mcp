@@ -9,6 +9,11 @@
   follow routes need for artist and playlist follows. **Existing users must reauthorize**:
   restart the server and complete Spotify consent again. No auth cache is deleted
   automatically.
+- New album and artist library tools: `get_saved_albums` (paginated), `save_albums` and
+  `remove_saved_albums` (20 per call), `get_followed_artists` (cursor-paginated via `after`),
+  `follow_artists` and `unfollow_artists` (50 per call). New `follow_playlist` is the
+  counterpart to `unfollow_playlist`. Writes prefer `/me/library` and fall back to the
+  entity routes on legacy apps, in upstream chunks of 40; a failed chunk propagates.
 
 ## 2026-09-20 — 0.7.0
 - Request `user-follow-read` and prefer artist URIs on `/me/library/contains`, with the

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from spotify_mcp.spotify_types import (
         AlbumObject,
+        ArtistObject,
         PlaylistObject,
         TrackObject,
     )
@@ -72,8 +73,9 @@ not just the SDK. Spotify's AI-input policy applies even without model training.
 
 New playlists are private unless public=true is explicitly requested. If Spotify
 reports unexpected visibility, confirm it in the Spotify app.
-Track library writes accept 50 items; membership checks accept 50 tracks/artists
-or 20 albums. Requests use chunks of at most 40. Earlier writes may apply on failure.
+Library writes accept 50 tracks/artists or 20 albums; membership checks accept 50
+tracks/artists or 20 albums. Requests use chunks of at most 40. Earlier writes may
+apply on failure. get_followed_artists pages by its `after` cursor, not offset.
 """
 
 # Shared Spotify glyph (inline data URI) attached to the server, tools, resources
@@ -164,6 +166,7 @@ class Album(BaseModel):
     genres: list[str] | None = None
     popularity: int | None = None
     external_urls: dict[str, str] | None = None
+    added_at: str | None = None
 
 
 # Tool result models (give every tool a real output schema)
@@ -248,6 +251,31 @@ class SavedTracks(BaseModel):
     previous: str | None = None
 
 
+class SavedAlbums(BaseModel):
+    """Paginated saved albums."""
+
+    items: list[Album]
+    total: int
+    limit: int
+    offset: int
+    next: str | None = None
+    previous: str | None = None
+
+
+class FollowedArtists(BaseModel):
+    """A cursor page of followed artists.
+
+    Spotify pages this list by cursor, not offset: pass `after` back to get the
+    next page. It is None on the last page.
+    """
+
+    items: list[Artist]
+    total: int | None = None
+    limit: int
+    after: str | None = None
+    next: str | None = None
+
+
 class Device(BaseModel):
     """A Spotify Connect device."""
 
@@ -327,6 +355,36 @@ def parse_track(item: TrackObject) -> Track:
         popularity=item.get("popularity"),
         external_urls=cast("dict[str, str]", item.get("external_urls")),
         is_local=bool(item.get("is_local", False)),
+    )
+
+
+def parse_album(item: AlbumObject) -> Album:
+    """Parse a Spotify album object into the Album model."""
+    artists = item.get("artists", [])
+    return Album(
+        name=item["name"],
+        id=item["id"],
+        artist=artists[0]["name"] if artists else "Unknown",
+        artists=[a["name"] for a in artists],
+        release_date=item.get("release_date"),
+        release_date_precision=item.get("release_date_precision"),
+        total_tracks=item.get("total_tracks"),
+        album_type=item.get("album_type"),
+        label=item.get("label"),
+        genres=item.get("genres", []),
+        popularity=item.get("popularity"),
+        external_urls=cast("dict[str, str]", item.get("external_urls")),
+    )
+
+
+def parse_artist(item: ArtistObject) -> Artist:
+    """Parse a Spotify artist object; restricted apps lose followers/popularity."""
+    return Artist(
+        name=item["name"],
+        id=item["id"],
+        genres=item.get("genres", []),
+        popularity=item.get("popularity"),
+        followers=(item.get("followers") or {}).get("total"),
     )
 
 
@@ -1743,6 +1801,255 @@ def check_following_artists(artist_ids: list[str]) -> MembershipStatus:
             artist_ids,
             lambda ids: spotify_api.following_artists_contains(spotify_client, ids),
         )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+# Public per-call caps for library writes. Albums keep the 20 that album checks
+# and reads use; everything else follows the 50 of tracks. Requests upstream are
+# chunked at 40 either way.
+LIBRARY_WRITE_LIMITS: dict[str, int] = {
+    "album": 20,
+    "artist": 50,
+    "show": 50,
+    "episode": 50,
+    "audiobook": 50,
+}
+
+
+def _library_write(
+    kind: str, ids: list[str], write: Callable[[list[str]], None], done: str
+) -> ActionResult:
+    """Validate a library write, run it and describe the result."""
+    limit = LIBRARY_WRITE_LIMITS[kind]
+    if not ids:
+        raise ValueError(f"At least one {kind} ID is required")
+    if len(ids) > limit:
+        raise ValueError(f"Maximum {limit} {kind} IDs per request, got {len(ids)}")
+
+    logger.info(f"📚 {done} {len(ids)} {kind}(s)")
+    write(ids)
+    return ActionResult(status="success", message=f"{done} {len(ids)} {kind}(s)")
+
+
+@mcp.tool(
+    title="Get Saved Albums",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def get_saved_albums(limit: int = 20, offset: int = 0) -> SavedAlbums:
+    """Get albums saved in the user's library.
+
+    Args:
+        limit: Max albums to return per page (1-50, default 20)
+        offset: Number of albums to skip for pagination (default 0)
+
+    Returns:
+        SavedAlbums with 'items' (albums with added_at) and pagination info
+    """
+    try:
+        limit = max(1, min(50, limit))
+
+        logger.info(f"💿 Getting saved albums (limit={limit}, offset={offset})")
+        result = (
+            spotify_client.current_user_saved_albums(limit=limit, offset=offset) or {}
+        )
+
+        albums = []
+        for item in result.get("items", []):
+            if item and item.get("album"):
+                album = parse_album(item["album"])
+                album.added_at = item.get("added_at")
+                albums.append(album)
+
+        log_pagination_info("get_saved_albums", result.get("total", 0), limit, offset)
+
+        return SavedAlbums(
+            items=albums,
+            total=result.get("total", 0),
+            limit=result.get("limit", limit),
+            offset=result.get("offset", offset),
+            next=result.get("next"),
+            previous=result.get("previous"),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Save Albums",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def save_albums(album_ids: list[str]) -> ActionResult:
+    """Save albums to the user's library.
+
+    Args:
+        album_ids: Album IDs or URIs (up to 20)
+    """
+    try:
+        return _library_write(
+            "album",
+            album_ids,
+            lambda ids: spotify_api.save_albums(spotify_client, ids),
+            "Saved",
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Remove Saved Albums",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def remove_saved_albums(album_ids: list[str]) -> ActionResult:
+    """Remove albums from the user's library.
+
+    Args:
+        album_ids: Album IDs or URIs (up to 20)
+    """
+    try:
+        return _library_write(
+            "album",
+            album_ids,
+            lambda ids: spotify_api.remove_saved_albums(spotify_client, ids),
+            "Removed",
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Get Followed Artists",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def get_followed_artists(limit: int = 20, after: str | None = None) -> FollowedArtists:
+    """Get the artists the user follows. Paged by cursor, not offset.
+
+    Args:
+        limit: Max artists to return per page (1-50, default 20)
+        after: The `after` cursor from the previous page (omit for the first page)
+
+    Returns:
+        FollowedArtists; pass its `after` back for the next page (None on the last)
+    """
+    try:
+        limit = max(1, min(50, limit))
+
+        logger.info(f"🎤 Getting followed artists (limit={limit}, after={after})")
+        result = spotify_client.current_user_followed_artists(
+            limit=limit, after=to_id(after) if after else None
+        )
+        page = (result or {}).get("artists") or {}
+
+        return FollowedArtists(
+            items=[parse_artist(a) for a in page.get("items", []) if a],
+            total=page.get("total"),
+            limit=page.get("limit", limit),
+            after=(page.get("cursors") or {}).get("after"),
+            next=page.get("next"),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Follow Artists",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def follow_artists(artist_ids: list[str]) -> ActionResult:
+    """Follow artists. Requires user-follow-modify; reauthorize if it is missing.
+
+    Args:
+        artist_ids: Artist IDs or URIs (up to 50)
+    """
+    try:
+        return _library_write(
+            "artist",
+            artist_ids,
+            lambda ids: spotify_api.follow_artists(spotify_client, ids),
+            "Followed",
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Unfollow Artists",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def unfollow_artists(artist_ids: list[str]) -> ActionResult:
+    """Unfollow artists. Requires user-follow-modify; reauthorize if it is missing.
+
+    Args:
+        artist_ids: Artist IDs or URIs (up to 50)
+    """
+    try:
+        return _library_write(
+            "artist",
+            artist_ids,
+            lambda ids: spotify_api.unfollow_artists(spotify_client, ids),
+            "Unfollowed",
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Follow Playlist",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def follow_playlist(playlist_id: str) -> ActionResult:
+    """Follow (save) a playlist so it appears in the user's library.
+
+    Args:
+        playlist_id: Playlist ID, URI or open.spotify.com URL
+    """
+    try:
+        logger.info(f"📋 Following playlist {playlist_id}")
+        spotify_api.follow_playlist(spotify_client, playlist_id)
+        return ActionResult(status="success", message="Playlist followed")
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 

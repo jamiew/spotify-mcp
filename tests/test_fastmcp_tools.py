@@ -29,26 +29,33 @@ from spotify_mcp.fastmcp_server import (
     current_playback_resource,
     current_user,
     discover_music_systematically,
+    follow_artists,
+    follow_playlist,
     get_album,
     get_artist,
+    get_followed_artists,
     get_me,
     get_playback_state,
     get_playlist,
     get_playlist_tracks,
     get_queue,
     get_recently_played,
+    get_saved_albums,
     get_saved_tracks,
     get_top_items,
     get_tracks,
     list_devices,
     list_playlists,
     playlist_resource,
+    remove_saved_albums,
     remove_saved_tracks,
     remove_tracks_from_playlist,
     reorder_playlist,
+    save_albums,
     save_tracks,
     search_music,
     track_resource,
+    unfollow_artists,
     unfollow_playlist,
     update_playlist_details,
 )
@@ -1544,3 +1551,191 @@ class TestGetTopItems:
     def test_rejects_bad_time_range(self, mock_spotify_api):
         with pytest.raises(ValueError, match="time_range"):
             get_top_items("tracks", time_range="yesterday")
+
+
+class TestGetSavedAlbums:
+    def test_success_includes_added_at(self, mock_spotify_api, sample_album_data):
+        mock_spotify_api.current_user_saved_albums.return_value = {
+            "items": [
+                {"added_at": "2026-01-01T00:00:00Z", "album": sample_album_data},
+                {"added_at": "2026-01-02T00:00:00Z", "album": None},
+            ],
+            "total": 2,
+            "limit": 20,
+            "offset": 0,
+            "next": None,
+        }
+
+        result = get_saved_albums()
+
+        assert [a.name for a in result.items] == ["Whenever You Need Somebody"]
+        assert result.items[0].added_at == "2026-01-01T00:00:00Z"
+        assert result.items[0].artist == "Rick Astley"
+        assert result.total == 2
+
+    def test_restricted_album_without_label_or_popularity(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_albums.return_value = {
+            "items": [{"album": {"id": "al1", "name": "Stripped"}}],
+            "total": 1,
+        }
+
+        result = get_saved_albums()
+
+        assert result.items[0].label is None
+        assert result.items[0].popularity is None
+
+    def test_limit_clamped(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_albums.return_value = {"items": []}
+
+        get_saved_albums(limit=999, offset=40)
+
+        mock_spotify_api.current_user_saved_albums.assert_called_once_with(
+            limit=50, offset=40
+        )
+
+    def test_spotify_error(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_albums.side_effect = SPOTIFY_ERROR
+
+        with pytest.raises(ValueError):
+            get_saved_albums()
+
+
+class TestGetFollowedArtists:
+    def test_returns_the_next_cursor(self, mock_spotify_api, sample_artist_data):
+        mock_spotify_api.current_user_followed_artists.return_value = {
+            "artists": {
+                "items": [sample_artist_data],
+                "total": 41,
+                "limit": 1,
+                "next": "https://api.spotify.com/v1/me/following?type=artist&after=x",
+                "cursors": {"after": "0gxyHStUsqpMadRV0Di1Qt"},
+            }
+        }
+
+        result = get_followed_artists(limit=1)
+
+        assert result.items[0].name == "Rick Astley"
+        assert result.after == "0gxyHStUsqpMadRV0Di1Qt"
+        assert result.total == 41
+
+    def test_passes_the_cursor_and_clamps_the_limit(self, mock_spotify_api):
+        mock_spotify_api.current_user_followed_artists.return_value = {
+            "artists": {"items": [], "cursors": {"after": None}}
+        }
+
+        result = get_followed_artists(limit=0, after="spotify:artist:a1")
+
+        mock_spotify_api.current_user_followed_artists.assert_called_once_with(
+            limit=1, after="a1"
+        )
+        assert result.after is None
+
+    def test_restricted_artist_without_followers(self, mock_spotify_api):
+        mock_spotify_api.current_user_followed_artists.return_value = {
+            "artists": {"items": [{"id": "a1", "name": "Stripped"}]}
+        }
+
+        result = get_followed_artists()
+
+        assert result.items[0].followers is None
+        assert result.items[0].popularity is None
+
+    def test_spotify_error(self, mock_spotify_api):
+        mock_spotify_api.current_user_followed_artists.side_effect = SPOTIFY_ERROR
+
+        with pytest.raises(ValueError):
+            get_followed_artists()
+
+
+# (tool, sender attribute, uri kind, per-call cap)
+ENTITY_WRITES = [
+    (save_albums, "_put", "album", 20),
+    (remove_saved_albums, "_delete", "album", 20),
+    (follow_artists, "_put", "artist", 50),
+    (unfollow_artists, "_delete", "artist", 50),
+]
+
+
+class TestEntityLibraryWriteTools:
+    @pytest.mark.parametrize(("tool", "sender", "kind", "cap"), ENTITY_WRITES)
+    def test_writes_uris_to_the_library(
+        self, mock_spotify_api, tool, sender, kind, cap
+    ):
+        result = tool(["a1", f"spotify:{kind}:a2"])
+
+        assert result.status == "success"
+        assert result.message.endswith(f"2 {kind}(s)")
+        getattr(mock_spotify_api, sender).assert_called_once_with(
+            "me/library", uris=f"spotify:{kind}:a1,spotify:{kind}:a2"
+        )
+
+    @pytest.mark.parametrize(("tool", "sender", "kind", "cap"), ENTITY_WRITES)
+    def test_the_cap_is_enforced_before_any_request(
+        self, mock_spotify_api, tool, sender, kind, cap
+    ):
+        with pytest.raises(ValueError, match=f"Maximum {cap}"):
+            tool([f"id{i}" for i in range(cap + 1)])
+        getattr(mock_spotify_api, sender).assert_not_called()
+
+    @pytest.mark.parametrize(("tool", "sender", "kind", "cap"), ENTITY_WRITES)
+    def test_an_empty_list_is_rejected(self, mock_spotify_api, tool, sender, kind, cap):
+        with pytest.raises(ValueError, match="At least one"):
+            tool([])
+        getattr(mock_spotify_api, sender).assert_not_called()
+
+    @pytest.mark.parametrize(("tool", "sender", "kind", "cap"), ENTITY_WRITES)
+    def test_the_full_cap_goes_out_in_chunks_of_forty(
+        self, mock_spotify_api, tool, sender, kind, cap
+    ):
+        tool([f"id{i}" for i in range(cap)])
+
+        calls = getattr(mock_spotify_api, sender).call_args_list
+        assert [len(c.kwargs["uris"].split(",")) for c in calls] == (
+            [40, 10] if cap == 50 else [20]
+        )
+
+    @pytest.mark.parametrize(
+        ("tool", "sender", "kind", "cap"),
+        [w for w in ENTITY_WRITES if w[3] > 40],
+    )
+    def test_failed_second_chunk_never_reports_success(
+        self, mock_spotify_api, tool, sender, kind, cap
+    ):
+        error = SpotifyException(429, -1, "Quota exceeded", reason="QUOTA_EXCEEDED")
+        getattr(mock_spotify_api, sender).side_effect = [None, error]
+
+        with pytest.raises(ValueError):
+            tool([f"id{i}" for i in range(cap)])
+
+    @pytest.mark.parametrize(("tool", "sender", "kind", "cap"), ENTITY_WRITES)
+    def test_legacy_apps_use_the_entity_route(
+        self, mock_spotify_api, tool, sender, kind, cap
+    ):
+        getattr(mock_spotify_api, sender).side_effect = [
+            SpotifyException(404, -1, "not served"),
+            None,
+        ]
+
+        tool([f"spotify:{kind}:a1"])
+
+        legacy = getattr(mock_spotify_api, sender).call_args_list[-1]
+        assert legacy.args[0] in ("me/albums", "me/following")
+        assert legacy.kwargs["ids"] == "a1"
+
+
+class TestFollowPlaylist:
+    def test_follows_by_url(self, mock_spotify_api):
+        result = follow_playlist("https://open.spotify.com/playlist/pl1?si=abc")
+
+        assert result.status == "success"
+        mock_spotify_api._put.assert_called_once_with(
+            "me/library", uris="spotify:playlist:pl1"
+        )
+
+    def test_spotify_error(self, mock_spotify_api):
+        mock_spotify_api._put.side_effect = SpotifyException(
+            403, -1, "Forbidden", reason="INSUFFICIENT_SCOPE"
+        )
+
+        with pytest.raises(ValueError):
+            follow_playlist("pl1")
