@@ -77,8 +77,8 @@ not just the SDK. Spotify's AI-input policy applies even without model training.
 
 New playlists are private unless public=true is explicitly requested. If Spotify
 reports unexpected visibility, confirm it in the Spotify app.
-Library writes accept 50 items (albums 20); membership checks accept 50
-tracks/artists/shows or 20 albums. Requests use chunks of at most 40. Earlier writes may
+Library writes accept 50 items (albums 20); membership checks (check_saved_*,
+check_following_artists) accept 50 items or 20 albums. Requests use chunks of at most 40. Earlier writes may
 apply on failure. get_followed_artists pages by its `after` cursor, not offset.
 """
 
@@ -2374,6 +2374,32 @@ def check_saved_shows(show_ids: list[str]) -> MembershipStatus:
 
 
 @mcp.tool(
+    title="Check Saved Episodes",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def check_saved_episodes(episode_ids: list[str]) -> MembershipStatus:
+    """Check which podcast episodes are already saved, in upstream chunks of 40.
+
+    Args:
+        episode_ids: Episode IDs or URIs (up to 50)
+    Returns:
+        MembershipStatus.results maps each Spotify episode id to true if saved
+    """
+    try:
+        return _membership(
+            "episode",
+            episode_ids,
+            lambda ids: spotify_api.saved_episodes_contains(spotify_client, ids),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
     title="Get Show Episodes",
     annotations=ToolAnnotations(
         readOnlyHint=True, idempotentHint=True, openWorldHint=True
@@ -2572,6 +2598,32 @@ def get_saved_audiobooks(limit: int = 20, offset: int = 0) -> SavedAudiobooks:
             offset=result.get("offset", offset),
             next=result.get("next"),
             previous=result.get("previous"),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Check Saved Audiobooks",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def check_saved_audiobooks(audiobook_ids: list[str]) -> MembershipStatus:
+    """Check which audiobooks are already saved, in upstream chunks of 40.
+
+    Args:
+        audiobook_ids: Audiobook IDs or URIs (up to 50)
+    Returns:
+        MembershipStatus.results maps each Spotify audiobook id to true if saved
+    """
+    try:
+        return _membership(
+            "audiobook",
+            audiobook_ids,
+            lambda ids: spotify_api.saved_audiobooks_contains(spotify_client, ids),
         )
     except SpotifyException as e:
         raise convert_spotify_error(e) from e

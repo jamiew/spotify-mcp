@@ -22,6 +22,8 @@ from spotify_mcp.fastmcp_server import (
     artist_resource,
     check_following_artists,
     check_saved_albums,
+    check_saved_audiobooks,
+    check_saved_episodes,
     check_saved_shows,
     check_saved_tracks,
     control_playback,
@@ -2177,3 +2179,62 @@ class TestGetSavedAudiobooks:
 
         with pytest.raises(ValueError):
             get_saved_audiobooks()
+
+
+class TestCheckSavedEpisodesAndAudiobooks:
+    @pytest.mark.parametrize(
+        ("tool", "kind"),
+        [(check_saved_episodes, "episode"), (check_saved_audiobooks, "audiobook")],
+    )
+    def test_keyed_by_id_through_the_consolidated_route(
+        self, mock_spotify_api, tool, kind
+    ):
+        mock_spotify_api._get.return_value = [True, False]
+
+        result = tool(["x1", f"spotify:{kind}:x2"])
+
+        assert result.results == {"x1": True, "x2": False}
+        assert result.checked == 2
+        mock_spotify_api._get.assert_called_once_with(
+            "me/library/contains", uris=f"spotify:{kind}:x1,spotify:{kind}:x2"
+        )
+
+    @pytest.mark.parametrize(
+        ("tool", "legacy_path"),
+        [
+            (check_saved_episodes, "me/episodes/contains"),
+            (check_saved_audiobooks, "me/audiobooks/contains"),
+        ],
+    )
+    def test_legacy_apps_use_the_entity_route(
+        self, mock_spotify_api, tool, legacy_path
+    ):
+        mock_spotify_api._get.side_effect = [
+            SpotifyException(404, -1, "not served"),
+            [True],
+        ]
+
+        assert tool(["x1"]).results == {"x1": True}
+        assert mock_spotify_api._get.call_args_list[-1].args == (legacy_path,)
+
+    @pytest.mark.parametrize("tool", [check_saved_episodes, check_saved_audiobooks])
+    def test_fifty_items_go_out_in_two_chunks(self, mock_spotify_api, tool):
+        mock_spotify_api._get.side_effect = [[False] * 40, [True] * 10]
+
+        result = tool([f"id{i}" for i in range(50)])
+
+        assert result.results == {f"id{i}": i >= 40 for i in range(50)}
+        assert mock_spotify_api._get.call_count == 2
+
+    @pytest.mark.parametrize("tool", [check_saved_episodes, check_saved_audiobooks])
+    def test_more_than_fifty_is_rejected_before_requests(self, mock_spotify_api, tool):
+        with pytest.raises(ValueError, match="Maximum 50"):
+            tool([f"id{i}" for i in range(51)])
+        mock_spotify_api._get.assert_not_called()
+
+    @pytest.mark.parametrize("tool", [check_saved_episodes, check_saved_audiobooks])
+    def test_a_short_answer_is_an_error_not_a_mis_zip(self, mock_spotify_api, tool):
+        mock_spotify_api._get.return_value = [True]
+
+        with pytest.raises(ValueError):
+            tool(["x1", "x2"])

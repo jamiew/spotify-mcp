@@ -610,6 +610,32 @@ class TestMembershipReads:
         assert sp._get.call_args_list[-1].args == ("me/shows/contains",)
         assert sp._get.call_args_list[-1].kwargs == {"ids": "sh1"}
 
+    @pytest.mark.parametrize(
+        ("operation", "kind", "legacy_path"),
+        [
+            (spotify_api.saved_episodes_contains, "episode", "me/episodes/contains"),
+            (
+                spotify_api.saved_audiobooks_contains,
+                "audiobook",
+                "me/audiobooks/contains",
+            ),
+        ],
+    )
+    def test_episode_and_audiobook_checks_use_their_routes(
+        self, operation, kind, legacy_path
+    ):
+        sp = MagicMock()
+        sp._get.side_effect = [SpotifyException(400, -1, "bad request"), [False, True]]
+
+        assert operation(sp, [f"spotify:{kind}:x1", "x2"]) == [False, True]
+
+        assert sp._get.call_args_list[0].args == ("me/library/contains",)
+        assert sp._get.call_args_list[0].kwargs == {
+            "uris": f"spotify:{kind}:x1,spotify:{kind}:x2"
+        }
+        assert sp._get.call_args_list[-1].args == (legacy_path,)
+        assert sp._get.call_args_list[-1].kwargs == {"ids": "x1,x2"}
+
     def test_following_artists_prefers_consolidated_library(self):
         sp = MagicMock()
         sp._get.return_value = [True]
@@ -759,6 +785,8 @@ class TestLibraryHTTP:
         ("kind", "operation", "count"),
         [
             ("show", spotify_api.saved_shows_contains, 50),
+            ("episode", spotify_api.saved_episodes_contains, 50),
+            ("audiobook", spotify_api.saved_audiobooks_contains, 50),
             ("track", spotify_api.saved_tracks_contains, 50),
             ("artist", spotify_api.following_artists_contains, 50),
             ("album", spotify_api.saved_albums_contains, 20),

@@ -187,7 +187,14 @@ def with_fallback[T](
 # is the known case. This is a different shape from `with_fallback`: there is no
 # alternative path to swap in, only a different number of requests. Remember a
 # withheld kind so the 403 is paid once per process instead of on every call.
-BATCH_LIMITS: dict[str, int] = {"track": 50, "artist": 50, "album": 20, "show": 50}
+BATCH_LIMITS: dict[str, int] = {
+    "track": 50,
+    "artist": 50,
+    "album": 20,
+    "show": 50,
+    "episode": 50,
+    "audiobook": 50,
+}
 _batch_withheld: set[str] = set()
 
 
@@ -503,6 +510,18 @@ def saved_albums_contains(sp: spotipy.Spotify, album_ids: list[str]) -> list[boo
 def saved_shows_contains(sp: spotipy.Spotify, show_ids: list[str]) -> list[bool]:
     """Which podcast shows are saved, with at most 40 URIs per upstream request."""
     return _library_contains(sp, "show", show_ids)
+
+
+def saved_episodes_contains(sp: spotipy.Spotify, episode_ids: list[str]) -> list[bool]:
+    """Which podcast episodes are saved, with at most 40 URIs per upstream request."""
+    return _library_contains(sp, "episode", episode_ids)
+
+
+def saved_audiobooks_contains(
+    sp: spotipy.Spotify, audiobook_ids: list[str]
+) -> list[bool]:
+    """Which audiobooks are saved, with at most 40 URIs per upstream request."""
+    return _library_contains(sp, "audiobook", audiobook_ids)
 
 
 def following_artists_contains(

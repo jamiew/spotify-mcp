@@ -31,6 +31,9 @@
   `remove_saved_audiobooks` (50 per call). The February 2026 reference still lists
   `GET /me/audiobooks`, and audiobook URIs on `PUT`/`DELETE /me/library`; legacy apps fall back
   to `/me/audiobooks`. Audiobooks are only offered in some Spotify markets.
+- New `check_saved_episodes` and `check_saved_audiobooks` (50 per call), on
+  `/me/library/contains` with the `/me/episodes/contains` and `/me/audiobooks/contains`
+  fallbacks.
 - Spotify behaviour behind the new tools is covered by request-level tests against mocked
   responses for both regimes only; it has not been verified against the live API yet.
 

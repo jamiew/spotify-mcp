@@ -68,7 +68,7 @@ Do not automatically delete the auth cache.
 
 ## Features
 
-46 tools, six resources (user, playback, track, playlist, artist, album), and five prompts.
+48 tools, six resources (user, playback, track, playlist, artist, album), and five prompts.
 Tools provide typed outputs and behavior annotations; large playlist reads report progress.
 Playlist removal asks for confirmation where supported, reordering uses snapshot guards,
 and playback control attempts best-effort read-after-write confirmation, not guaranteed success.
@@ -115,9 +115,11 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 | `check_saved_shows` | Check up to 50 saved podcast shows |
 | `get_show_episodes` | Read a show's episodes with resume points and pagination |
 | `get_saved_episodes` | Read saved podcast episodes with pagination |
+| `check_saved_episodes` | Check up to 50 saved podcast episodes |
 | `save_episodes` | Save up to 50 podcast episodes |
 | `remove_saved_episodes` | Remove up to 50 saved podcast episodes |
 | `get_saved_audiobooks` | Read saved audiobooks with pagination |
+| `check_saved_audiobooks` | Check up to 50 saved audiobooks |
 | `save_audiobooks` | Save up to 50 audiobooks |
 | `remove_saved_audiobooks` | Remove up to 50 saved audiobooks |
 | `get_top_items` | Read top artists or tracks over a time range |
@@ -127,8 +129,8 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 
 - **New playlists default to private.** Existing playlists are unchanged. Spotify can report
   unexpected visibility, so confirm sensitive playlists in the Spotify app.
-- Library writes (tracks, artists, shows, episodes, audiobooks) and track/artist/show membership
-  checks accept **50 items**, sent upstream in batches of **40**. Album saves, removals and checks
+- Library writes (tracks, artists, shows, episodes, audiobooks) and membership checks
+  accept **50 items**, sent upstream in batches of **40**. Album saves, removals and checks
   accept **20**. Membership results preserve input
   alignment; incomplete chunks fail. Writes are not atomic across chunks: earlier changes
   may remain after an error. Check membership before retrying.
