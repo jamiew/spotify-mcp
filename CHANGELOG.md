@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- `control_playback` and `add_to_queue` keep podcast episodes: `spotify:episode:` URIs and
+  episode share URLs were coerced into `spotify:track:` URIs and rejected by Spotify. Bare
+  IDs are still treated as tracks; an album, show or playlist passed as an item is refused
+  with a pointer to `context_uri`. Show, album and playlist context URIs pass through as before.
+
 ## 2026-09-20 — 0.7.0
 - Request `user-follow-read` and prefer artist URIs on `/me/library/contains`, with the
   legacy `/me/following/contains` fallback. Existing users must reauthorize for the scope;

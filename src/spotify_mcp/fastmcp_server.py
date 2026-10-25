@@ -26,7 +26,7 @@ from spotify_mcp.logging_utils import (
     log_pagination_info,
     log_tool_execution,
 )
-from spotify_mcp.utils import to_id, to_uri
+from spotify_mcp.utils import to_id, to_playable_uri, to_uri
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -613,8 +613,10 @@ async def control_playback(
 
     Args:
         action: 'play', 'pause', 'next', 'previous', 'seek', 'volume', 'shuffle' or 'repeat'
-        track_ids: Tracks to play (action='play'; ignored when context_uri is set)
-        context_uri: Album/playlist/artist URI to play (action='play')
+        track_ids: Tracks or episodes to play (action='play'; ignored when
+            context_uri is set). Bare IDs are tracks; pass spotify:episode: URIs
+            or episode share URLs for podcast episodes.
+        context_uri: Album, playlist, artist or show URI to play (action='play')
         position_ms: Position in milliseconds (required for action='seek')
         volume_percent: Volume 0-100 (required for action='volume')
         state: 'on'/'off' for shuffle; 'track'/'context'/'off' for repeat
@@ -644,7 +646,7 @@ async def control_playback(
                 )
             elif track_ids:
                 spotify_client.start_playback(
-                    device_id=device_id, uris=[to_uri("track", t) for t in track_ids]
+                    device_id=device_id, uris=[to_playable_uri(t) for t in track_ids]
                 )
             else:
                 spotify_client.start_playback(device_id=device_id)
@@ -866,19 +868,22 @@ def search_music(
 )
 @log_tool_execution
 def add_to_queue(track_id: str) -> ActionResult:
-    """Add a track to the playback queue.
+    """Add a track or podcast episode to the playback queue.
 
     Args:
-        track_id: Track ID, spotify:track: URI or open.spotify.com URL
+        track_id: Track ID, or a spotify:track:/spotify:episode: URI or
+            open.spotify.com URL. A bare ID is taken as a track.
     Returns:
         Status and message
     """
     try:
-        logger.info(f"🎵 Adding track {track_id} to queue")
-        # to_uri, not string formatting: a URI or share URL would otherwise be
-        # pasted into `spotify:track:` a second time and rejected.
-        spotify_client.add_to_queue(to_uri("track", track_id))
-        return ActionResult(status="success", message="Added track to queue")
+        logger.info(f"🎵 Adding {track_id} to queue")
+        # Not string formatting: a URI or share URL would otherwise be pasted
+        # into `spotify:track:` a second time, and an episode would become a track.
+        uri = to_playable_uri(track_id)
+        spotify_client.add_to_queue(uri)
+        kind = uri.split(":")[1]
+        return ActionResult(status="success", message=f"Added {kind} to queue")
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 

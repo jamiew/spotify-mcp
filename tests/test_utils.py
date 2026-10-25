@@ -1,6 +1,8 @@
 """Tests for utility functions."""
 
-from spotify_mcp.utils import normalize_redirect_uri, to_id, to_uri
+import pytest
+
+from spotify_mcp.utils import normalize_redirect_uri, to_id, to_playable_uri, to_uri
 
 
 class TestNormalizeRedirectUri:
@@ -52,3 +54,23 @@ class TestToUri:
 
     def test_is_idempotent_on_a_uri(self):
         assert to_uri("track", "spotify:track:abc") == "spotify:track:abc"
+
+
+class TestToPlayableUri:
+    def test_bare_id_is_a_track(self):
+        assert to_playable_uri("abc") == "spotify:track:abc"
+
+    def test_keeps_an_episode_uri(self):
+        assert to_playable_uri("spotify:episode:ep1") == "spotify:episode:ep1"
+
+    def test_keeps_a_track_uri(self):
+        assert to_playable_uri("spotify:track:abc") == "spotify:track:abc"
+
+    def test_reads_the_kind_from_a_share_url(self):
+        url = "https://open.spotify.com/intl-de/episode/ep1?si=xyz"
+        assert to_playable_uri(url) == "spotify:episode:ep1"
+
+    def test_rejects_kinds_the_player_cannot_take_as_items(self):
+        # An album is a context, not an item; Spotify would reject it anyway.
+        with pytest.raises(ValueError, match="album"):
+            to_playable_uri("spotify:album:al1")

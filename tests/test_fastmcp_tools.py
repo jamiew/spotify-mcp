@@ -122,6 +122,45 @@ class TestControlPlayback:
             device_id=None, context_uri="spotify:album:x"
         )
 
+    async def test_play_keeps_episode_uris(
+        self, mock_spotify_api, sample_playback_data
+    ):
+        mock_spotify_api.current_playback.return_value = sample_playback_data
+
+        await control_playback(
+            "play",
+            track_ids=[
+                "spotify:episode:ep1",
+                "https://open.spotify.com/episode/ep2?si=x",
+                "abc",
+            ],
+        )
+
+        mock_spotify_api.start_playback.assert_called_once_with(
+            device_id=None,
+            uris=["spotify:episode:ep1", "spotify:episode:ep2", "spotify:track:abc"],
+        )
+
+    @pytest.mark.parametrize(
+        "context",
+        ["spotify:show:sh1", "spotify:album:al1", "spotify:playlist:pl1"],
+    )
+    async def test_play_passes_context_uris_through(
+        self, mock_spotify_api, sample_playback_data, context
+    ):
+        mock_spotify_api.current_playback.return_value = sample_playback_data
+
+        await control_playback("play", context_uri=context)
+
+        mock_spotify_api.start_playback.assert_called_once_with(
+            device_id=None, context_uri=context
+        )
+
+    async def test_play_rejects_a_context_passed_as_an_item(self, mock_spotify_api):
+        with pytest.raises(ValueError, match="album"):
+            await control_playback("play", track_ids=["spotify:album:al1"])
+        mock_spotify_api.start_playback.assert_not_called()
+
     async def test_seek_without_position_raises(self, mock_spotify_api):
         with pytest.raises(ValueError, match="position_ms"):
             await control_playback("seek")
@@ -448,6 +487,21 @@ class TestQueue:
         mock_spotify_api.add_to_queue.assert_called_once_with(
             "spotify:track:4iV5W9uYEdYUVa79Axb7Rh"
         )
+
+    @pytest.mark.parametrize(
+        "given",
+        [
+            "spotify:episode:ep1",
+            "https://open.spotify.com/episode/ep1",
+            "https://open.spotify.com/intl-de/episode/ep1?si=abc",
+        ],
+    )
+    def test_add_to_queue_keeps_episodes(self, mock_spotify_api, given):
+        # Episodes used to be coerced into spotify:track: and rejected upstream
+        result = add_to_queue(given)
+
+        assert result.message == "Added episode to queue"
+        mock_spotify_api.add_to_queue.assert_called_once_with("spotify:episode:ep1")
 
     def test_add_to_queue_error(self, mock_spotify_api):
         mock_spotify_api.add_to_queue.side_effect = SPOTIFY_ERROR
