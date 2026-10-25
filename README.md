@@ -60,7 +60,8 @@ In the config above, change `command` to `uv` and `args` to
 Keep the same environment variables. Without cloning, use
 `uvx --from git+https://github.com/jamiew/spotify-mcp.git spotify-mcp`.
 
-**Reauthorization:** artist-follow checks need `user-follow-read`. Existing grants do not
+**Reauthorization:** artist-follow checks need `user-follow-read`, and following or
+unfollowing artists and playlists needs `user-follow-modify`. Existing grants do not
 receive new scopes automatically. Restart and complete Spotify authorization when prompted;
 if access is still denied, review the app's grant in your Spotify account and reauthorize.
 Do not automatically delete the auth cache.

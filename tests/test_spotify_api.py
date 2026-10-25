@@ -116,6 +116,13 @@ class TestSpotifyClient:
 
         assert "user-follow-read" in query["scope"][0].split()
 
+    def test_authorization_requests_permission_to_change_follows(self):
+        # /me/library writes and the legacy follow routes both need it.
+        client = Client()
+        query = parse_qs(urlparse(client.auth_manager.get_authorize_url()).query)
+
+        assert "user-follow-modify" in query["scope"][0].split()
+
 
 class TestWithFallback:
     """The Feb 2026 regime fallback. These are the paths a fake upstream can't
@@ -438,6 +445,130 @@ class TestLibraryWrites:
         ]
 
 
+# (operation, method, uri kind, legacy path, extra legacy query params)
+LIBRARY_WRITES = [
+    (spotify_api.save_albums, "PUT", "album", "me/albums", {}),
+    (spotify_api.remove_saved_albums, "DELETE", "album", "me/albums", {}),
+    (spotify_api.follow_artists, "PUT", "artist", "me/following", {"type": "artist"}),
+    (
+        spotify_api.unfollow_artists,
+        "DELETE",
+        "artist",
+        "me/following",
+        {"type": "artist"},
+    ),
+    (spotify_api.save_shows, "PUT", "show", "me/shows", {}),
+    (spotify_api.remove_saved_shows, "DELETE", "show", "me/shows", {}),
+    (spotify_api.save_episodes, "PUT", "episode", "me/episodes", {}),
+    (spotify_api.remove_saved_episodes, "DELETE", "episode", "me/episodes", {}),
+    (spotify_api.save_audiobooks, "PUT", "audiobook", "me/audiobooks", {}),
+    (spotify_api.remove_saved_audiobooks, "DELETE", "audiobook", "me/audiobooks", {}),
+]
+
+
+def _sender(sp, method):
+    return sp._put if method == "PUT" else sp._delete
+
+
+class TestEntityLibraryWrites:
+    """Albums, artists, shows, episodes and audiobooks: restricted apps write
+    URIs to /me/library, legacy apps keep the entity routes with bare ids."""
+
+    @pytest.mark.parametrize(
+        ("operation", "method", "kind", "path", "extra"), LIBRARY_WRITES
+    )
+    def test_prefers_the_restricted_library_route(
+        self, operation, method, kind, path, extra
+    ):
+        sp = MagicMock()
+
+        operation(sp, ["a1", f"spotify:{kind}:a2"])
+
+        _sender(sp, method).assert_called_once_with(
+            "me/library", uris=f"spotify:{kind}:a1,spotify:{kind}:a2"
+        )
+
+    @pytest.mark.parametrize(
+        ("operation", "method", "kind", "path", "extra"), LIBRARY_WRITES
+    )
+    def test_falls_back_to_the_entity_route_with_bare_ids(
+        self, operation, method, kind, path, extra
+    ):
+        sp = MagicMock()
+        _sender(sp, method).side_effect = [
+            SpotifyException(400, -1, "bad request"),
+            None,
+        ]
+
+        operation(sp, [f"spotify:{kind}:a1", f"https://open.spotify.com/{kind}/a2"])
+
+        last = _sender(sp, method).call_args_list[-1]
+        assert last.args == (path,)
+        assert last.kwargs == {"ids": "a1,a2", **extra}
+
+    @pytest.mark.parametrize(
+        ("operation", "method", "kind", "path", "extra"), LIBRARY_WRITES
+    )
+    def test_permission_errors_are_not_retried_on_the_legacy_route(
+        self, operation, method, kind, path, extra
+    ):
+        sp = MagicMock()
+        error = SpotifyException(403, -1, "Forbidden", reason="INSUFFICIENT_SCOPE")
+        _sender(sp, method).side_effect = error
+
+        with pytest.raises(SpotifyException) as caught:
+            operation(sp, ["a1"])
+
+        assert caught.value is error
+        assert _sender(sp, method).call_count == 1
+
+    @pytest.mark.parametrize(
+        ("operation", "method", "kind", "path", "extra"), LIBRARY_WRITES
+    )
+    def test_a_failed_later_chunk_propagates(
+        self, operation, method, kind, path, extra
+    ):
+        sp = MagicMock()
+        error = SpotifyException(429, -1, "Quota exceeded", reason="QUOTA_EXCEEDED")
+        _sender(sp, method).side_effect = [None, error]
+
+        with pytest.raises(SpotifyException):
+            operation(sp, [f"id{i}" for i in range(41)])
+
+        assert _sender(sp, method).call_count == 2
+
+    def test_an_artist_fallback_does_not_pin_other_library_writes(self):
+        # PUT /me/library does not document artist URIs; a rejection there must
+        # not send album, show or track writes to their legacy routes.
+        sp = MagicMock()
+        sp._put.side_effect = [SpotifyException(400, -1, "bad uri"), None, None]
+
+        spotify_api.follow_artists(sp, ["ar1"])
+        spotify_api.save_albums(sp, ["al1"])
+
+        assert [c.args[0] for c in sp._put.call_args_list] == [
+            "me/library",
+            "me/following",
+            "me/library",
+        ]
+
+    def test_follow_playlist_prefers_the_restricted_library_route(self):
+        sp = MagicMock()
+
+        spotify_api.follow_playlist(sp, "https://open.spotify.com/playlist/pl1?si=x")
+
+        sp._put.assert_called_once_with("me/library", uris="spotify:playlist:pl1")
+
+    def test_follow_playlist_falls_back_to_the_followers_route(self):
+        sp = MagicMock()
+        sp._put.side_effect = [SpotifyException(404, -1, "not served"), None]
+
+        spotify_api.follow_playlist(sp, "spotify:playlist:pl1")
+
+        assert sp._put.call_args_list[-1].args == ("playlists/pl1/followers",)
+        assert sp._put.call_args_list[-1].kwargs == {}
+
+
 class TestMembershipReads:
     def test_saved_tracks_contains_prefers_the_restricted_route(self):
         sp = MagicMock()
@@ -468,6 +599,16 @@ class TestMembershipReads:
             "me/library/contains",
             "me/albums/contains",
         ]
+
+    def test_saved_shows_contains_uses_the_show_routes(self):
+        sp = MagicMock()
+        sp._get.side_effect = [SpotifyException(400, -1, "bad request"), [True]]
+
+        assert spotify_api.saved_shows_contains(sp, ["spotify:show:sh1"]) == [True]
+
+        assert sp._get.call_args_list[0].kwargs == {"uris": "spotify:show:sh1"}
+        assert sp._get.call_args_list[-1].args == ("me/shows/contains",)
+        assert sp._get.call_args_list[-1].kwargs == {"ids": "sh1"}
 
     def test_following_artists_prefers_consolidated_library(self):
         sp = MagicMock()
@@ -554,8 +695,70 @@ class TestLibraryHTTP:
         assert request.call_count == (count + 39) // 40
 
     @pytest.mark.parametrize(
+        ("operation", "method", "kind", "path", "extra"), LIBRARY_WRITES
+    )
+    def test_entity_writes_send_uris_as_a_query_in_chunks_of_forty(
+        self, operation, method, kind, path, extra
+    ):
+        received = []
+
+        def respond(actual_method, url, **kwargs):
+            assert actual_method == method
+            assert url.endswith("/me/library")
+            assert "data" not in kwargs
+            uris = kwargs["params"]["uris"].split(",")
+            assert 1 <= len(uris) <= 40
+            received.extend(uris)
+            return self._response(actual_method, url, kwargs, None)
+
+        sp, request = self._client(respond)
+        operation(sp, [f"id{i}" for i in range(50)])
+
+        assert received == [f"spotify:{kind}:id{i}" for i in range(50)]
+        assert request.call_count == 2
+
+    def test_legacy_artist_follow_sends_type_and_ids_as_a_query(self):
+        calls = []
+
+        def respond(method, url, **kwargs):
+            calls.append((method, url.rsplit("/v1/", 1)[-1], dict(kwargs["params"])))
+            if url.endswith("/me/library"):
+                return self._response(
+                    method, url, kwargs, {"error": {"message": "Not found"}}, 404
+                )
+            return self._response(method, url, kwargs, None)
+
+        sp, _ = self._client(respond)
+        spotify_api.follow_artists(sp, ["spotify:artist:a1", "a2"])
+
+        assert calls == [
+            ("PUT", "me/library", {"uris": "spotify:artist:a1,spotify:artist:a2"}),
+            ("PUT", "me/following", {"ids": "a1,a2", "type": "artist"}),
+        ]
+
+    def test_legacy_playlist_follow_puts_to_the_followers_route(self):
+        calls = []
+
+        def respond(method, url, **kwargs):
+            calls.append((method, url.rsplit("/v1/", 1)[-1], dict(kwargs["params"])))
+            if url.endswith("/me/library"):
+                return self._response(
+                    method, url, kwargs, {"error": {"message": "Not found"}}, 404
+                )
+            return self._response(method, url, kwargs, None)
+
+        sp, _ = self._client(respond)
+        spotify_api.follow_playlist(sp, "pl1")
+
+        assert calls == [
+            ("PUT", "me/library", {"uris": "spotify:playlist:pl1"}),
+            ("PUT", "playlists/pl1/followers", {}),
+        ]
+
+    @pytest.mark.parametrize(
         ("kind", "operation", "count"),
         [
+            ("show", spotify_api.saved_shows_contains, 50),
             ("track", spotify_api.saved_tracks_contains, 50),
             ("artist", spotify_api.following_artists_contains, 50),
             ("album", spotify_api.saved_albums_contains, 20),
