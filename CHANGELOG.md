@@ -18,6 +18,12 @@
   `check_saved_shows` (50 per call), `get_show_episodes` (paginated, with the user's resume
   point), `get_saved_episodes`, `save_episodes` and `remove_saved_episodes` (50 per call).
   `publisher` is optional because restricted apps lose it.
+- New audiobook tools: `get_saved_audiobooks` (paginated), `save_audiobooks` and
+  `remove_saved_audiobooks` (50 per call). The February 2026 reference still lists
+  `GET /me/audiobooks`, and audiobook URIs on `PUT`/`DELETE /me/library`; legacy apps fall back
+  to `/me/audiobooks`. Audiobooks are only offered in some Spotify markets.
+- Spotify behaviour behind the new tools is covered by request-level tests against mocked
+  responses for both regimes only; it has not been verified against the live API yet.
 
 ## 2026-09-20 — 0.7.0
 - Request `user-follow-read` and prefer artist URIs on `/me/library/contains`, with the

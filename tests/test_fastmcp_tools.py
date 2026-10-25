@@ -42,6 +42,7 @@ from spotify_mcp.fastmcp_server import (
     get_queue,
     get_recently_played,
     get_saved_albums,
+    get_saved_audiobooks,
     get_saved_episodes,
     get_saved_shows,
     get_saved_tracks,
@@ -52,12 +53,14 @@ from spotify_mcp.fastmcp_server import (
     list_playlists,
     playlist_resource,
     remove_saved_albums,
+    remove_saved_audiobooks,
     remove_saved_episodes,
     remove_saved_shows,
     remove_saved_tracks,
     remove_tracks_from_playlist,
     reorder_playlist,
     save_albums,
+    save_audiobooks,
     save_episodes,
     save_shows,
     save_tracks,
@@ -1665,6 +1668,8 @@ ENTITY_WRITES = [
     (remove_saved_shows, "_delete", "show", 50),
     (save_episodes, "_put", "episode", 50),
     (remove_saved_episodes, "_delete", "episode", 50),
+    (save_audiobooks, "_put", "audiobook", 50),
+    (remove_saved_audiobooks, "_delete", "audiobook", 50),
 ]
 
 
@@ -1925,3 +1930,74 @@ class TestGetSavedEpisodes:
 
         with pytest.raises(ValueError):
             get_saved_episodes()
+
+
+SAMPLE_AUDIOBOOK = {
+    "id": "ab1",
+    "name": "A Book",
+    "authors": [{"name": "Author One"}],
+    "narrators": [{"name": "Narrator One"}],
+    "publisher": "House",
+    "edition": "Unabridged",
+    "total_chapters": 30,
+    "explicit": False,
+    "external_urls": {"spotify": "https://open.spotify.com/audiobook/ab1"},
+}
+
+
+class TestGetSavedAudiobooks:
+    def test_reads_bare_audiobook_items(self, mock_spotify_api):
+        # The reference documents SimplifiedAudiobookObject items, unwrapped.
+        mock_spotify_api._get.return_value = {
+            "items": [SAMPLE_AUDIOBOOK, None],
+            "total": 1,
+            "limit": 20,
+            "offset": 0,
+        }
+
+        result = get_saved_audiobooks()
+
+        mock_spotify_api._get.assert_called_once_with(
+            "me/audiobooks", limit=20, offset=0
+        )
+        book = result.items[0]
+        assert book.authors == ["Author One"]
+        assert book.narrators == ["Narrator One"]
+        assert book.added_at is None
+        assert result.total == 1
+
+    def test_reads_wrapped_items_with_added_at(self, mock_spotify_api):
+        mock_spotify_api._get.return_value = {
+            "items": [
+                {"added_at": "2026-04-01T00:00:00Z", "audiobook": SAMPLE_AUDIOBOOK}
+            ],
+            "total": 1,
+        }
+
+        result = get_saved_audiobooks()
+
+        assert result.items[0].id == "ab1"
+        assert result.items[0].added_at == "2026-04-01T00:00:00Z"
+
+    def test_restricted_audiobook_without_publisher(self, mock_spotify_api):
+        mock_spotify_api._get.return_value = {
+            "items": [{"id": "ab1", "name": "Stripped"}],
+            "total": 1,
+        }
+
+        assert get_saved_audiobooks().items[0].publisher is None
+
+    def test_limit_clamped(self, mock_spotify_api):
+        mock_spotify_api._get.return_value = {"items": []}
+
+        get_saved_audiobooks(limit=999, offset=10)
+
+        mock_spotify_api._get.assert_called_once_with(
+            "me/audiobooks", limit=50, offset=10
+        )
+
+    def test_spotify_error(self, mock_spotify_api):
+        mock_spotify_api._get.side_effect = SPOTIFY_ERROR
+
+        with pytest.raises(ValueError):
+            get_saved_audiobooks()

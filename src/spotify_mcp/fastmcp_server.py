@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from spotify_mcp.spotify_types import (
         AlbumObject,
         ArtistObject,
+        AudiobookObject,
         EpisodeObject,
         PlaylistObject,
         ShowObject,
@@ -53,8 +54,8 @@ logging.basicConfig(
 # Guidance that applies to the whole surface lives here rather than in every tool
 # description — it ships once per session instead of being repeated per tool.
 INSTRUCTIONS = """\
-Spotify for the signed-in user. Tracks, albums, artists, playlists, shows and episodes
-are accepted as bare IDs or spotify: URIs anywhere.
+Spotify for the signed-in user. Tracks, albums, artists, playlists, shows, episodes and
+audiobooks are accepted as bare IDs or spotify: URIs anywhere.
 
 Start from search_music to turn names into IDs. get_playlist_tracks returns zero-based
 positions, which reorder_playlist and remove_tracks_from_playlist need.
@@ -318,6 +319,33 @@ class EpisodeList(BaseModel):
     previous: str | None = None
 
 
+class Audiobook(BaseModel):
+    """An audiobook. `publisher` is stripped for restricted apps."""
+
+    name: str
+    id: str
+    authors: list[str] | None = None
+    narrators: list[str] | None = None
+    publisher: str | None = None
+    description: str | None = None
+    edition: str | None = None
+    total_chapters: int | None = None
+    explicit: bool | None = None
+    external_urls: dict[str, str] | None = None
+    added_at: str | None = None
+
+
+class SavedAudiobooks(BaseModel):
+    """Paginated saved audiobooks."""
+
+    items: list[Audiobook]
+    total: int
+    limit: int
+    offset: int
+    next: str | None = None
+    previous: str | None = None
+
+
 class FollowedArtists(BaseModel):
     """A cursor page of followed artists.
 
@@ -473,6 +501,22 @@ def parse_episode(item: EpisodeObject, show_id: str | None = None) -> Episode:
         explicit=item.get("explicit"),
         resume_position_ms=resume.get("resume_position_ms"),
         fully_played=resume.get("fully_played"),
+        external_urls=cast("dict[str, str]", item.get("external_urls")),
+    )
+
+
+def parse_audiobook(item: AudiobookObject) -> Audiobook:
+    """Parse a Spotify audiobook object into the Audiobook model."""
+    return Audiobook(
+        name=item["name"],
+        id=item["id"],
+        authors=[a["name"] for a in item.get("authors", []) if a.get("name")],
+        narrators=[n["name"] for n in item.get("narrators", []) if n.get("name")],
+        publisher=item.get("publisher"),
+        description=item.get("description"),
+        edition=item.get("edition"),
+        total_chapters=item.get("total_chapters"),
+        explicit=item.get("explicit"),
         external_urls=cast("dict[str, str]", item.get("external_urls")),
     )
 
@@ -2443,6 +2487,117 @@ def remove_saved_episodes(episode_ids: list[str]) -> ActionResult:
             "episode",
             episode_ids,
             lambda ids: spotify_api.remove_saved_episodes(spotify_client, ids),
+            "Removed",
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Get Saved Audiobooks",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def get_saved_audiobooks(limit: int = 20, offset: int = 0) -> SavedAudiobooks:
+    """Get the audiobooks saved in the user's library.
+
+    Args:
+        limit: Max audiobooks to return per page (1-50, default 20)
+        offset: Number of audiobooks to skip for pagination (default 0)
+
+    Returns:
+        SavedAudiobooks with 'items' and pagination info
+    """
+    try:
+        limit = max(1, min(50, limit))
+
+        logger.info(f"📖 Getting saved audiobooks (limit={limit}, offset={offset})")
+        result = spotify_client._get("me/audiobooks", limit=limit, offset=offset) or {}
+
+        books = []
+        for item in result.get("items", []):
+            if not item:
+                continue
+            # The reference documents bare audiobook objects here, while the other
+            # saved-item lists wrap theirs with added_at. Accept either shape.
+            if isinstance(item.get("audiobook"), dict):
+                book = parse_audiobook(item["audiobook"])
+                book.added_at = item.get("added_at")
+            elif item.get("id"):
+                book = parse_audiobook(item)
+            else:
+                continue
+            books.append(book)
+
+        log_pagination_info(
+            "get_saved_audiobooks", result.get("total", 0), limit, offset
+        )
+
+        return SavedAudiobooks(
+            items=books,
+            total=result.get("total", 0),
+            limit=result.get("limit", limit),
+            offset=result.get("offset", offset),
+            next=result.get("next"),
+            previous=result.get("previous"),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Save Audiobooks",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def save_audiobooks(audiobook_ids: list[str]) -> ActionResult:
+    """Save audiobooks to the user's library.
+
+    Args:
+        audiobook_ids: Audiobook IDs or URIs (up to 50)
+    """
+    try:
+        return _library_write(
+            "audiobook",
+            audiobook_ids,
+            lambda ids: spotify_api.save_audiobooks(spotify_client, ids),
+            "Saved",
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Remove Saved Audiobooks",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def remove_saved_audiobooks(audiobook_ids: list[str]) -> ActionResult:
+    """Remove audiobooks from the user's library.
+
+    Args:
+        audiobook_ids: Audiobook IDs or URIs (up to 50)
+    """
+    try:
+        return _library_write(
+            "audiobook",
+            audiobook_ids,
+            lambda ids: spotify_api.remove_saved_audiobooks(spotify_client, ids),
             "Removed",
         )
     except SpotifyException as e:

@@ -68,7 +68,7 @@ Do not automatically delete the auth cache.
 
 ## Features
 
-43 tools, six resources (user, playback, track, playlist, artist, album), and five prompts.
+46 tools, six resources (user, playback, track, playlist, artist, album), and five prompts.
 Tools provide typed outputs and behavior annotations; large playlist reads report progress.
 Playlist removal asks for confirmation where supported, reordering uses snapshot guards,
 and playback control attempts best-effort read-after-write confirmation, not guaranteed success.
@@ -117,6 +117,9 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 | `get_saved_episodes` | Read saved podcast episodes with pagination |
 | `save_episodes` | Save up to 50 podcast episodes |
 | `remove_saved_episodes` | Remove up to 50 saved podcast episodes |
+| `get_saved_audiobooks` | Read saved audiobooks with pagination |
+| `save_audiobooks` | Save up to 50 audiobooks |
+| `remove_saved_audiobooks` | Remove up to 50 saved audiobooks |
 | `get_top_items` | Read top artists or tracks over a time range |
 | `get_recently_played` | Read recently played tracks with timestamps |
 
@@ -124,7 +127,7 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 
 - **New playlists default to private.** Existing playlists are unchanged. Spotify can report
   unexpected visibility, so confirm sensitive playlists in the Spotify app.
-- Library writes (tracks, artists, shows, episodes) and track/artist/show membership
+- Library writes (tracks, artists, shows, episodes, audiobooks) and track/artist/show membership
   checks accept **50 items**, sent upstream in batches of **40**. Album saves, removals and checks
   accept **20**. Membership results preserve input
   alignment; incomplete chunks fail. Writes are not atomic across chunks: earlier changes

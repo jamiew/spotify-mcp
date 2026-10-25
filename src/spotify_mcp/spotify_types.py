@@ -143,3 +143,24 @@ class EpisodeObject(_EpisodeRequired, total=False):
     external_urls: ExternalUrls
     # Only present on full episode objects (saved episodes), not on a show's list.
     show: ShowObject
+
+
+class NamedRef(TypedDict, total=False):
+    name: str
+
+
+class _AudiobookRequired(TypedDict):
+    name: str
+    id: str
+
+
+class AudiobookObject(_AudiobookRequired, total=False):
+    authors: list[NamedRef]
+    narrators: list[NamedRef]
+    # Restricted apps lose `publisher`.
+    publisher: str
+    description: str
+    edition: str
+    total_chapters: int
+    explicit: bool
+    external_urls: ExternalUrls
