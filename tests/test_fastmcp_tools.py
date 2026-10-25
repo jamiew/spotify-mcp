@@ -22,6 +22,7 @@ from spotify_mcp.fastmcp_server import (
     artist_resource,
     check_following_artists,
     check_saved_albums,
+    check_saved_shows,
     check_saved_tracks,
     control_playback,
     create_mood_playlist,
@@ -41,17 +42,24 @@ from spotify_mcp.fastmcp_server import (
     get_queue,
     get_recently_played,
     get_saved_albums,
+    get_saved_episodes,
+    get_saved_shows,
     get_saved_tracks,
+    get_show_episodes,
     get_top_items,
     get_tracks,
     list_devices,
     list_playlists,
     playlist_resource,
     remove_saved_albums,
+    remove_saved_episodes,
+    remove_saved_shows,
     remove_saved_tracks,
     remove_tracks_from_playlist,
     reorder_playlist,
     save_albums,
+    save_episodes,
+    save_shows,
     save_tracks,
     search_music,
     track_resource,
@@ -1653,6 +1661,10 @@ ENTITY_WRITES = [
     (remove_saved_albums, "_delete", "album", 20),
     (follow_artists, "_put", "artist", 50),
     (unfollow_artists, "_delete", "artist", 50),
+    (save_shows, "_put", "show", 50),
+    (remove_saved_shows, "_delete", "show", 50),
+    (save_episodes, "_put", "episode", 50),
+    (remove_saved_episodes, "_delete", "episode", 50),
 ]
 
 
@@ -1719,7 +1731,16 @@ class TestEntityLibraryWriteTools:
         tool([f"spotify:{kind}:a1"])
 
         legacy = getattr(mock_spotify_api, sender).call_args_list[-1]
-        assert legacy.args[0] in ("me/albums", "me/following")
+        assert (
+            legacy.args[0]
+            == {
+                "album": "me/albums",
+                "artist": "me/following",
+                "show": "me/shows",
+                "episode": "me/episodes",
+                "audiobook": "me/audiobooks",
+            }[kind]
+        )
         assert legacy.kwargs["ids"] == "a1"
 
 
@@ -1739,3 +1760,168 @@ class TestFollowPlaylist:
 
         with pytest.raises(ValueError):
             follow_playlist("pl1")
+
+
+SAMPLE_SHOW = {
+    "id": "sh1",
+    "name": "Some Podcast",
+    "publisher": "Some Network",
+    "description": "Talk",
+    "total_episodes": 120,
+    "media_type": "audio",
+    "explicit": False,
+    "external_urls": {"spotify": "https://open.spotify.com/show/sh1"},
+}
+
+SAMPLE_EPISODE = {
+    "id": "ep1",
+    "name": "Episode 1",
+    "description": "First",
+    "release_date": "2026-01-01",
+    "duration_ms": 3600000,
+    "explicit": False,
+    "resume_point": {"fully_played": False, "resume_position_ms": 120000},
+    "external_urls": {"spotify": "https://open.spotify.com/episode/ep1"},
+}
+
+
+class TestGetSavedShows:
+    def test_success_includes_added_at(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_shows.return_value = {
+            "items": [
+                {"added_at": "2026-02-01T00:00:00Z", "show": SAMPLE_SHOW},
+                {"added_at": "2026-02-02T00:00:00Z", "show": None},
+            ],
+            "total": 2,
+            "limit": 20,
+            "offset": 0,
+        }
+
+        result = get_saved_shows()
+
+        assert [s.name for s in result.items] == ["Some Podcast"]
+        assert result.items[0].added_at == "2026-02-01T00:00:00Z"
+        assert result.items[0].total_episodes == 120
+
+    def test_restricted_show_without_publisher(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_shows.return_value = {
+            "items": [{"show": {"id": "sh1", "name": "Stripped"}}],
+            "total": 1,
+        }
+
+        assert get_saved_shows().items[0].publisher is None
+
+    def test_limit_clamped(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_shows.return_value = {"items": []}
+
+        get_saved_shows(limit=999, offset=5)
+
+        mock_spotify_api.current_user_saved_shows.assert_called_once_with(
+            limit=50, offset=5
+        )
+
+    def test_spotify_error(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_shows.side_effect = SPOTIFY_ERROR
+
+        with pytest.raises(ValueError):
+            get_saved_shows()
+
+
+class TestCheckSavedShows:
+    def test_keyed_by_id_through_the_consolidated_route(self, mock_spotify_api):
+        mock_spotify_api._get.return_value = [True, False]
+
+        result = check_saved_shows(["sh1", "spotify:show:sh2"])
+
+        assert result.results == {"sh1": True, "sh2": False}
+        mock_spotify_api._get.assert_called_once_with(
+            "me/library/contains", uris="spotify:show:sh1,spotify:show:sh2"
+        )
+
+    def test_legacy_apps_use_the_show_route(self, mock_spotify_api):
+        mock_spotify_api._get.side_effect = [
+            SpotifyException(400, -1, "bad request"),
+            [True],
+        ]
+
+        assert check_saved_shows(["sh1"]).results == {"sh1": True}
+        assert mock_spotify_api._get.call_args_list[-1].args == ("me/shows/contains",)
+
+    def test_more_than_fifty_is_rejected_before_requests(self, mock_spotify_api):
+        with pytest.raises(ValueError, match="Maximum 50"):
+            check_saved_shows([f"sh{i}" for i in range(51)])
+        mock_spotify_api._get.assert_not_called()
+
+
+class TestGetShowEpisodes:
+    def test_stamps_the_show_and_reads_resume_points(self, mock_spotify_api):
+        mock_spotify_api.show_episodes.return_value = {
+            "items": [SAMPLE_EPISODE, None],
+            "total": 120,
+            "limit": 20,
+            "offset": 0,
+            "next": "https://api.spotify.com/v1/shows/sh1/episodes?offset=20",
+        }
+
+        result = get_show_episodes("spotify:show:sh1")
+
+        mock_spotify_api.show_episodes.assert_called_once_with(
+            "sh1", limit=20, offset=0
+        )
+        assert len(result.items) == 1
+        episode = result.items[0]
+        assert episode.show_id == "sh1"
+        assert episode.resume_position_ms == 120000
+        assert episode.fully_played is False
+        assert result.total == 120
+
+    def test_limit_clamped(self, mock_spotify_api):
+        mock_spotify_api.show_episodes.return_value = {"items": []}
+
+        get_show_episodes("sh1", limit=0, offset=40)
+
+        mock_spotify_api.show_episodes.assert_called_once_with(
+            "sh1", limit=1, offset=40
+        )
+
+    def test_spotify_error(self, mock_spotify_api):
+        mock_spotify_api.show_episodes.side_effect = SPOTIFY_ERROR
+
+        with pytest.raises(ValueError):
+            get_show_episodes("sh1")
+
+
+class TestGetSavedEpisodes:
+    def test_includes_show_and_added_at(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_episodes.return_value = {
+            "items": [
+                {
+                    "added_at": "2026-03-01T00:00:00Z",
+                    "episode": {**SAMPLE_EPISODE, "show": SAMPLE_SHOW},
+                },
+                {"added_at": "2026-03-02T00:00:00Z", "episode": None},
+            ],
+            "total": 2,
+        }
+
+        result = get_saved_episodes()
+
+        assert len(result.items) == 1
+        assert result.items[0].show == "Some Podcast"
+        assert result.items[0].show_id == "sh1"
+        assert result.items[0].added_at == "2026-03-01T00:00:00Z"
+
+    def test_limit_clamped(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_episodes.return_value = {"items": []}
+
+        get_saved_episodes(limit=999)
+
+        mock_spotify_api.current_user_saved_episodes.assert_called_once_with(
+            limit=50, offset=0
+        )
+
+    def test_spotify_error(self, mock_spotify_api):
+        mock_spotify_api.current_user_saved_episodes.side_effect = SPOTIFY_ERROR
+
+        with pytest.raises(ValueError):
+            get_saved_episodes()

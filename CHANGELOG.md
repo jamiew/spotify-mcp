@@ -14,6 +14,10 @@
   `follow_artists` and `unfollow_artists` (50 per call). New `follow_playlist` is the
   counterpart to `unfollow_playlist`. Writes prefer `/me/library` and fall back to the
   entity routes on legacy apps, in upstream chunks of 40; a failed chunk propagates.
+- New podcast tools: `get_saved_shows`, `save_shows`, `remove_saved_shows` and
+  `check_saved_shows` (50 per call), `get_show_episodes` (paginated, with the user's resume
+  point), `get_saved_episodes`, `save_episodes` and `remove_saved_episodes` (50 per call).
+  `publisher` is optional because restricted apps lose it.
 
 ## 2026-09-20 — 0.7.0
 - Request `user-follow-read` and prefer artist URIs on `/me/library/contains`, with the

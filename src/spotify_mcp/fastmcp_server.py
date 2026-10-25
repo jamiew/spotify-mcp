@@ -34,7 +34,9 @@ if TYPE_CHECKING:
     from spotify_mcp.spotify_types import (
         AlbumObject,
         ArtistObject,
+        EpisodeObject,
         PlaylistObject,
+        ShowObject,
         TrackObject,
     )
 
@@ -51,8 +53,8 @@ logging.basicConfig(
 # Guidance that applies to the whole surface lives here rather than in every tool
 # description — it ships once per session instead of being repeated per tool.
 INSTRUCTIONS = """\
-Spotify for the signed-in user. Tracks, albums, artists and playlists are accepted as
-bare IDs or spotify: URIs anywhere.
+Spotify for the signed-in user. Tracks, albums, artists, playlists, shows and episodes
+are accepted as bare IDs or spotify: URIs anywhere.
 
 Start from search_music to turn names into IDs. get_playlist_tracks returns zero-based
 positions, which reorder_playlist and remove_tracks_from_playlist need.
@@ -65,7 +67,8 @@ beats fifty single ones. get_artist returns top tracks, and get_album its track
 list, only when you ask for exactly one id.
 
 Playback tools need Spotify Premium and an open device; if none is active, call
-list_devices then transfer_playback.
+list_devices then transfer_playback. Play or queue podcast episodes with spotify:episode:
+URIs (bare ids are tracks); play a whole show with its spotify:show: URI as context_uri.
 
 Recommendations, audio features and related artists are unavailable to many apps;
 this server does not expose those endpoints. Availability depends on app access,
@@ -73,8 +76,8 @@ not just the SDK. Spotify's AI-input policy applies even without model training.
 
 New playlists are private unless public=true is explicitly requested. If Spotify
 reports unexpected visibility, confirm it in the Spotify app.
-Library writes accept 50 tracks/artists or 20 albums; membership checks accept 50
-tracks/artists or 20 albums. Requests use chunks of at most 40. Earlier writes may
+Library writes accept 50 items (albums 20); membership checks accept 50
+tracks/artists/shows or 20 albums. Requests use chunks of at most 40. Earlier writes may
 apply on failure. get_followed_artists pages by its `after` cursor, not offset.
 """
 
@@ -262,6 +265,59 @@ class SavedAlbums(BaseModel):
     previous: str | None = None
 
 
+class Show(BaseModel):
+    """A podcast show. `publisher` is stripped for restricted apps."""
+
+    name: str
+    id: str
+    publisher: str | None = None
+    description: str | None = None
+    total_episodes: int | None = None
+    media_type: str | None = None
+    explicit: bool | None = None
+    external_urls: dict[str, str] | None = None
+    added_at: str | None = None
+
+
+class Episode(BaseModel):
+    """A podcast episode, with the user's resume point where Spotify reports one."""
+
+    name: str
+    id: str | None = None
+    show: str | None = None
+    show_id: str | None = None
+    description: str | None = None
+    release_date: str | None = None
+    duration_ms: int | None = None
+    explicit: bool | None = None
+    resume_position_ms: int | None = None
+    fully_played: bool | None = None
+    external_urls: dict[str, str] | None = None
+    added_at: str | None = None
+
+
+class SavedShows(BaseModel):
+    """Paginated saved podcast shows."""
+
+    items: list[Show]
+    total: int
+    limit: int
+    offset: int
+    next: str | None = None
+    previous: str | None = None
+
+
+class EpisodeList(BaseModel):
+    """Paginated podcast episodes (a show's episodes, or the saved ones)."""
+
+    items: list[Episode]
+    total: int
+    limit: int
+    offset: int
+    next: str | None = None
+    previous: str | None = None
+
+
 class FollowedArtists(BaseModel):
     """A cursor page of followed artists.
 
@@ -385,6 +441,39 @@ def parse_artist(item: ArtistObject) -> Artist:
         genres=item.get("genres", []),
         popularity=item.get("popularity"),
         followers=(item.get("followers") or {}).get("total"),
+    )
+
+
+def parse_show(item: ShowObject) -> Show:
+    """Parse a Spotify show object into the Show model."""
+    return Show(
+        name=item["name"],
+        id=item["id"],
+        publisher=item.get("publisher"),
+        description=item.get("description"),
+        total_episodes=item.get("total_episodes"),
+        media_type=item.get("media_type"),
+        explicit=item.get("explicit"),
+        external_urls=cast("dict[str, str]", item.get("external_urls")),
+    )
+
+
+def parse_episode(item: EpisodeObject, show_id: str | None = None) -> Episode:
+    """Parse an episode; a show's episode list carries no show, so pass its id."""
+    show = cast("dict[str, str]", item.get("show") or {})
+    resume = item.get("resume_point") or {}
+    return Episode(
+        name=item.get("name") or "Unknown",
+        id=item.get("id"),
+        show=show.get("name"),
+        show_id=show.get("id") or show_id,
+        description=item.get("description"),
+        release_date=item.get("release_date"),
+        duration_ms=item.get("duration_ms"),
+        explicit=item.get("explicit"),
+        resume_position_ms=resume.get("resume_position_ms"),
+        fully_played=resume.get("fully_played"),
+        external_urls=cast("dict[str, str]", item.get("external_urls")),
     )
 
 
@@ -2078,6 +2167,284 @@ def unfollow_playlist(playlist_id: str) -> ActionResult:
         logger.info(f"🚮 Unfollowing playlist {playlist_id}")
         spotify_api.unfollow_playlist(spotify_client, playlist_id)
         return ActionResult(status="success", message="Playlist unfollowed/deleted")
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Get Saved Shows",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def get_saved_shows(limit: int = 20, offset: int = 0) -> SavedShows:
+    """Get the podcast shows saved in the user's library.
+
+    Args:
+        limit: Max shows to return per page (1-50, default 20)
+        offset: Number of shows to skip for pagination (default 0)
+
+    Returns:
+        SavedShows with 'items' (shows with added_at) and pagination info
+    """
+    try:
+        limit = max(1, min(50, limit))
+
+        logger.info(f"🎙️ Getting saved shows (limit={limit}, offset={offset})")
+        result = (
+            spotify_client.current_user_saved_shows(limit=limit, offset=offset) or {}
+        )
+
+        shows = []
+        for item in result.get("items", []):
+            if item and item.get("show"):
+                show = parse_show(item["show"])
+                show.added_at = item.get("added_at")
+                shows.append(show)
+
+        log_pagination_info("get_saved_shows", result.get("total", 0), limit, offset)
+
+        return SavedShows(
+            items=shows,
+            total=result.get("total", 0),
+            limit=result.get("limit", limit),
+            offset=result.get("offset", offset),
+            next=result.get("next"),
+            previous=result.get("previous"),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Save Shows",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def save_shows(show_ids: list[str]) -> ActionResult:
+    """Save (follow) podcast shows to the user's library.
+
+    Args:
+        show_ids: Show IDs or URIs (up to 50)
+    """
+    try:
+        return _library_write(
+            "show",
+            show_ids,
+            lambda ids: spotify_api.save_shows(spotify_client, ids),
+            "Saved",
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Remove Saved Shows",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def remove_saved_shows(show_ids: list[str]) -> ActionResult:
+    """Remove podcast shows from the user's library.
+
+    Args:
+        show_ids: Show IDs or URIs (up to 50)
+    """
+    try:
+        return _library_write(
+            "show",
+            show_ids,
+            lambda ids: spotify_api.remove_saved_shows(spotify_client, ids),
+            "Removed",
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Check Saved Shows",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def check_saved_shows(show_ids: list[str]) -> MembershipStatus:
+    """Check which podcast shows are already saved, in upstream chunks of 40.
+
+    Args:
+        show_ids: Show IDs or URIs (up to 50)
+    Returns:
+        MembershipStatus.results maps each Spotify show id to true if saved
+    """
+    try:
+        return _membership(
+            "show",
+            show_ids,
+            lambda ids: spotify_api.saved_shows_contains(spotify_client, ids),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Get Show Episodes",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def get_show_episodes(show_id: str, limit: int = 20, offset: int = 0) -> EpisodeList:
+    """Get a podcast show's episodes, with the user's resume point for each.
+
+    Args:
+        show_id: Show ID, URI or open.spotify.com URL
+        limit: Max episodes to return per page (1-50, default 20)
+        offset: Number of episodes to skip for pagination (default 0)
+
+    Returns:
+        EpisodeList with 'items' and pagination info
+    """
+    try:
+        limit = max(1, min(50, limit))
+        sid = to_id(show_id)
+
+        logger.info(
+            f"🎙️ Getting episodes of show {sid} (limit={limit}, offset={offset})"
+        )
+        result = spotify_client.show_episodes(sid, limit=limit, offset=offset) or {}
+
+        episodes = [
+            parse_episode(item, show_id=sid) for item in result.get("items", []) if item
+        ]
+
+        log_pagination_info("get_show_episodes", result.get("total", 0), limit, offset)
+
+        return EpisodeList(
+            items=episodes,
+            total=result.get("total", 0),
+            limit=result.get("limit", limit),
+            offset=result.get("offset", offset),
+            next=result.get("next"),
+            previous=result.get("previous"),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Get Saved Episodes",
+    annotations=ToolAnnotations(
+        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def get_saved_episodes(limit: int = 20, offset: int = 0) -> EpisodeList:
+    """Get the podcast episodes saved in the user's library.
+
+    Args:
+        limit: Max episodes to return per page (1-50, default 20)
+        offset: Number of episodes to skip for pagination (default 0)
+
+    Returns:
+        EpisodeList with 'items' (episodes with show and added_at) and pagination info
+    """
+    try:
+        limit = max(1, min(50, limit))
+
+        logger.info(f"🎙️ Getting saved episodes (limit={limit}, offset={offset})")
+        result = (
+            spotify_client.current_user_saved_episodes(limit=limit, offset=offset) or {}
+        )
+
+        episodes = []
+        for item in result.get("items", []):
+            if item and item.get("episode"):
+                episode = parse_episode(item["episode"])
+                episode.added_at = item.get("added_at")
+                episodes.append(episode)
+
+        log_pagination_info("get_saved_episodes", result.get("total", 0), limit, offset)
+
+        return EpisodeList(
+            items=episodes,
+            total=result.get("total", 0),
+            limit=result.get("limit", limit),
+            offset=result.get("offset", offset),
+            next=result.get("next"),
+            previous=result.get("previous"),
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Save Episodes",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def save_episodes(episode_ids: list[str]) -> ActionResult:
+    """Save podcast episodes to the user's library.
+
+    Args:
+        episode_ids: Episode IDs or URIs (up to 50)
+    """
+    try:
+        return _library_write(
+            "episode",
+            episode_ids,
+            lambda ids: spotify_api.save_episodes(spotify_client, ids),
+            "Saved",
+        )
+    except SpotifyException as e:
+        raise convert_spotify_error(e) from e
+
+
+@mcp.tool(
+    title="Remove Saved Episodes",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    icons=[SPOTIFY_ICON],
+)
+@log_tool_execution
+def remove_saved_episodes(episode_ids: list[str]) -> ActionResult:
+    """Remove podcast episodes from the user's library.
+
+    Args:
+        episode_ids: Episode IDs or URIs (up to 50)
+    """
+    try:
+        return _library_write(
+            "episode",
+            episode_ids,
+            lambda ids: spotify_api.remove_saved_episodes(spotify_client, ids),
+            "Removed",
+        )
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
 
