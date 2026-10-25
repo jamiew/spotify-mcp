@@ -119,6 +119,10 @@ class Track(BaseModel):
     added_at: str | None = None
     played_at: str | None = None
     is_local: bool = False
+    # "episode" for podcast episodes, which have a show instead of artists/album.
+    type: str | None = None
+    show: str | None = None
+    show_id: str | None = None
 
 
 class PlaybackState(BaseModel):
@@ -131,6 +135,8 @@ class PlaybackState(BaseModel):
     shuffle: bool = False
     repeat: str = "off"
     progress_ms: int | None = None
+    # "track", "episode", "ad" or "unknown"; explains a playing state with no track.
+    currently_playing_type: str | None = None
 
 
 class Playlist(BaseModel):
@@ -424,7 +430,22 @@ def parse_track(item: TrackObject) -> Track:
 
     Tolerates entries with no ID (local files, unavailable/removed tracks):
     they are returned with `id=None` rather than dropped or raising.
+    Podcast episodes come back with the show name in `artist` and `show`.
     """
+    if item.get("type") == "episode":
+        show = cast("dict[str, str]", item.get("show") or {})
+        show_name = show.get("name")
+        return Track(
+            name=item.get("name") or "Unknown",
+            id=item.get("id"),
+            artist=show_name or "Unknown",
+            release_date=item.get("release_date"),
+            duration_ms=item.get("duration_ms"),
+            external_urls=cast("dict[str, str]", item.get("external_urls")),
+            type="episode",
+            show=show_name,
+            show_id=show.get("id"),
+        )
     album_data = item.get("album", {})
     artists = item.get("artists", [])
     return Track(
@@ -439,6 +460,7 @@ def parse_track(item: TrackObject) -> Track:
         popularity=item.get("popularity"),
         external_urls=cast("dict[str, str]", item.get("external_urls")),
         is_local=bool(item.get("is_local", False)),
+        type=item.get("type"),
     )
 
 
@@ -744,9 +766,14 @@ async def _await_playback(
     return state
 
 
+# Without additional_types the player reports a playing podcast episode as
+# item=null, which reads as "playing, but nothing". Ask for both kinds.
+PLAYABLE_TYPES = "track,episode"
+
+
 def _playback_state() -> PlaybackState:
     """Read the current playback state into our model."""
-    result = spotify_client.current_playback()
+    result = spotify_client.current_playback(additional_types=PLAYABLE_TYPES)
     device = (result or {}).get("device") or {}
     return PlaybackState(
         is_playing=result.get("is_playing", False) if result else False,
@@ -756,6 +783,7 @@ def _playback_state() -> PlaybackState:
         shuffle=result.get("shuffle_state", False) if result else False,
         repeat=result.get("repeat_state", "off") if result else "off",
         progress_ms=result.get("progress_ms") if result else None,
+        currently_playing_type=result.get("currently_playing_type") if result else None,
     )
 
 
@@ -827,7 +855,7 @@ async def control_playback(
         # catalog id and must not be validated as a Track before issuing the action.
         previous_track_id: str | None = None
         if action in ("next", "previous"):
-            before = spotify_client.current_playback()
+            before = spotify_client.current_playback(additional_types=PLAYABLE_TYPES)
             previous_track_id = ((before or {}).get("item") or {}).get("id")
 
         if action == "play":
@@ -2730,21 +2758,23 @@ def current_user() -> str:
 def current_playback_resource() -> str:
     """Current playback state."""
     try:
-        playback = spotify_client.current_playback()
+        playback = spotify_client.current_playback(additional_types=PLAYABLE_TYPES)
         if not playback:
             return json.dumps({"status": "no_playback"})
 
-        track_info = playback.get("item", {})
+        item = parse_track(playback["item"]) if playback.get("item") else None
         return json.dumps(
             {
                 "is_playing": playback.get("is_playing", False),
                 "track": {
-                    "name": track_info.get("name"),
-                    "artist": track_info.get("artists", [{}])[0].get("name"),
-                    "album": track_info.get("album", {}).get("name"),
-                    "id": track_info.get("id"),
+                    "name": item.name,
+                    "artist": item.artist,
+                    "album": item.album,
+                    "id": item.id,
+                    "type": item.type,
+                    "show": item.show,
                 }
-                if track_info
+                if item
                 else None,
                 "device": playback.get("device", {}).get("name"),
                 "progress_ms": playback.get("progress_ms"),

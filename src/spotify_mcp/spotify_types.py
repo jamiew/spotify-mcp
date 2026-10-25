@@ -54,6 +54,10 @@ class TrackObject(_TrackRequired, total=False):
     popularity: int
     external_urls: ExternalUrls
     is_local: bool
+    # "track" or "episode": the player, queue and playlists can return either.
+    type: str
+    # Episodes carry their show (and no artists or album).
+    show: ShowObject
 
 
 class _ArtistRequired(TypedDict):

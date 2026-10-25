@@ -81,11 +81,11 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 | `get_tracks` | Read up to 50 tracks; individual reads when batching is unavailable |
 | `get_artist` | Read up to 50 artists; top tracks for a single artist |
 | `get_album` | Read up to 20 albums; track list for a single album |
-| `get_playback_state` | Read current track, device, progress, shuffle, and repeat |
+| `get_playback_state` | Read current track or episode, device, progress, shuffle, and repeat |
 | `control_playback` | Play tracks, episodes or a context; pause, skip, seek, volume, shuffle, repeat |
 | `list_devices` | List Spotify Connect devices |
 | `transfer_playback` | Move playback to another device |
-| `get_queue` | Read now playing and upcoming tracks |
+| `get_queue` | Read now playing and upcoming tracks and episodes |
 | `add_to_queue` | Queue a track or podcast episode |
 | `list_playlists` | List your playlists with pagination |
 | `get_playlist` | Read playlist metadata without tracks |

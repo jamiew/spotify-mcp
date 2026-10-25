@@ -75,6 +75,17 @@ from spotify_mcp.fastmcp_server import (
 SPOTIFY_ERROR = SpotifyException(404, -1, "track not found")
 
 
+PLAYING_EPISODE = {
+    "type": "episode",
+    "id": "ep1",
+    "name": "Episode 1",
+    "release_date": "2026-01-01",
+    "duration_ms": 3600000,
+    "show": {"id": "sh1", "name": "Some Podcast"},
+    "external_urls": {"spotify": "https://open.spotify.com/episode/ep1"},
+}
+
+
 class TestGetPlaybackState:
     def test_get_playback_state(self, mock_spotify_api, sample_playback_data):
         mock_spotify_api.current_playback.return_value = sample_playback_data
@@ -88,6 +99,54 @@ class TestGetPlaybackState:
         assert result.device == "My iPhone"
         assert result.volume == 70
         mock_spotify_api.current_playback.assert_called_once()
+
+    def test_asks_spotify_for_episodes_too(
+        self, mock_spotify_api, sample_playback_data
+    ):
+        mock_spotify_api.current_playback.return_value = sample_playback_data
+
+        get_playback_state()
+
+        mock_spotify_api.current_playback.assert_called_once_with(
+            additional_types="track,episode"
+        )
+
+    def test_a_playing_episode_shows_its_show(self, mock_spotify_api):
+        mock_spotify_api.current_playback.return_value = {
+            "is_playing": True,
+            "currently_playing_type": "episode",
+            "item": PLAYING_EPISODE,
+            "device": {"name": "Kitchen"},
+            "progress_ms": 1000,
+        }
+
+        result = get_playback_state()
+
+        assert result.currently_playing_type == "episode"
+        assert result.track is not None
+        assert result.track.type == "episode"
+        assert result.track.id == "ep1"
+        assert result.track.name == "Episode 1"
+        assert result.track.artist == "Some Podcast"
+        assert result.track.show == "Some Podcast"
+        assert result.track.show_id == "sh1"
+        assert result.track.album is None
+        assert result.track.release_date == "2026-01-01"
+
+    def test_an_item_spotify_withheld_is_explained_by_the_type(self, mock_spotify_api):
+        # What the player sends for an episode when additional_types is missing,
+        # and still sends for ads: playing, with no item.
+        mock_spotify_api.current_playback.return_value = {
+            "is_playing": True,
+            "currently_playing_type": "ad",
+            "item": None,
+        }
+
+        result = get_playback_state()
+
+        assert result.is_playing is True
+        assert result.track is None
+        assert result.currently_playing_type == "ad"
 
     def test_no_active_playback(self, mock_spotify_api):
         mock_spotify_api.current_playback.return_value = None
@@ -314,7 +373,7 @@ class TestControlPlaybackReadBack:
         monkeypatch.setattr("spotify_mcp.fastmcp_server._CONFIRM_DELAY_S", 0.01)
         advanced = asyncio.Event()
         asyncio.get_running_loop().call_soon(advanced.set)
-        mock_spotify_api.current_playback.side_effect = lambda: self._playing(
+        mock_spotify_api.current_playback.side_effect = lambda **_: self._playing(
             is_playing=advanced.is_set()
         )
 
@@ -322,6 +381,22 @@ class TestControlPlaybackReadBack:
 
         assert advanced.is_set()
         assert result.is_playing is True
+
+    async def test_next_can_leave_an_episode(self, mock_spotify_api):
+        episode = {"is_playing": True, "item": PLAYING_EPISODE}
+        mock_spotify_api.current_playback.side_effect = [
+            episode,
+            episode,
+            self._playing(track_id="t2"),
+        ]
+
+        result = await control_playback("next")
+
+        assert result.track is not None
+        assert result.track.id == "t2"
+        assert mock_spotify_api.current_playback.call_args_list[0].kwargs == {
+            "additional_types": "track,episode"
+        }
 
     async def test_shuffle_waits_for_the_flag(self, mock_spotify_api):
         mock_spotify_api.current_playback.side_effect = [
@@ -538,6 +613,19 @@ class TestQueue:
         assert result.currently_playing is not None
         assert result.currently_playing.name == "Never Gonna Give You Up"
         assert len(result.queue) == 2
+
+    def test_get_queue_with_episodes(self, mock_spotify_api, sample_track_data):
+        mock_spotify_api.queue.return_value = {
+            "currently_playing": PLAYING_EPISODE,
+            "queue": [sample_track_data, PLAYING_EPISODE],
+        }
+
+        result = get_queue()
+
+        assert result.currently_playing is not None
+        assert result.currently_playing.show == "Some Podcast"
+        assert [t.type for t in result.queue] == [None, "episode"]
+        assert result.queue[1].artist == "Some Podcast"
 
     def test_get_queue_empty(self, mock_spotify_api):
         mock_spotify_api.queue.return_value = {"currently_playing": None, "queue": []}
@@ -1429,6 +1517,23 @@ class TestResources:
 
         assert result["is_playing"] is True
         assert result["track"]["name"] == "Never Gonna Give You Up"
+
+    def test_current_playback_resource_shows_an_episode(self, mock_spotify_api):
+        mock_spotify_api.current_playback.return_value = {
+            "is_playing": True,
+            "item": PLAYING_EPISODE,
+            "device": {"name": "Kitchen"},
+        }
+
+        data = json.loads(current_playback_resource())
+
+        mock_spotify_api.current_playback.assert_called_once_with(
+            additional_types="track,episode"
+        )
+        assert data["track"]["type"] == "episode"
+        assert data["track"]["show"] == "Some Podcast"
+        assert data["track"]["artist"] == "Some Podcast"
+        assert data["track"]["album"] is None
 
     def test_current_playback_resource_no_playback(self, mock_spotify_api):
         mock_spotify_api.current_playback.return_value = None

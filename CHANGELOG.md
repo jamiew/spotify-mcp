@@ -8,6 +8,12 @@
 - `add_tracks_to_playlist` and `remove_tracks_from_playlist` keep episode URIs and episode
   share URLs too, on both the `/items` and the legacy `/tracks` routes. Bare IDs are still
   tracks.
+- `get_playback_state`, the `spotify://playback/current` resource and the skip check in
+  `control_playback` now ask for `additional_types=track,episode`. Before, a playing podcast
+  episode came back as playing with no track. Episodes in playback and in `get_queue` are
+  returned with `type: "episode"`, the show name in `artist` and `show`, and `show_id`;
+  `Track` gains the optional `type`, `show` and `show_id` fields. `PlaybackState` gains
+  `currently_playing_type`, which explains a playing state with no item (for example an ad).
 - Request the `user-follow-modify` scope, which the `/me/library` writes and the legacy
   follow routes need for artist and playlist follows. **Existing users must reauthorize**:
   restart the server and complete Spotify consent again. No auth cache is deleted
