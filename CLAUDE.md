@@ -10,11 +10,14 @@ This file provides essential guidance for working with the Spotify MCP server co
 - `uv run pytest` - Run all tests (must pass before commits)
 - `uv run mypy src/` - Type checking (must pass before commits)
   - Optional speedup on mypy 2.x: `uv run mypy src/ --num-workers 4` (parallel checking)
+- `uv run ruff check src/ tests/` and `uv run ruff format --check src/ tests/` - Lint and format (CI gate)
+- `uv run bandit -r src/` - Security lint (CI gate)
 
 ### Environment Setup
 Required environment variables:
 - `SPOTIFY_CLIENT_ID` - Spotify API Client ID
 - `SPOTIFY_CLIENT_SECRET` - Spotify API Client Secret
+- `SPOTIFY_REDIRECT_URI` - OAuth redirect URI registered in the Spotify app (`http://127.0.0.1:8888`)
 
 Three-tier configuration (highest priority first):
 1. Environment variables (for production/MCP usage)
@@ -22,9 +25,11 @@ Three-tier configuration (highest priority first):
 3. `pyproject.toml` defaults (fallback - edit `[tool.spotify-mcp.env]` section)
 
 ### Git Workflow
-**Quality Gates**: Before any commit, ALWAYS run:
+**Quality Gates**: Before any commit, ALWAYS run the same checks CI runs:
 - `uv run mypy src/` - Type checking must pass
 - `uv run pytest` - All tests must pass
+- `uv run ruff check src/ tests/` and `uv run ruff format --check src/ tests/` - Lint must pass
+- `uv run bandit -r src/` - Security lint must pass
 
 **Commit Message Format:**
 ```
@@ -40,11 +45,14 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 ### Releasing
 Publishing is fully automated via OIDC trusted publishing — no tokens stored anywhere.
 
-1. Bump `version` in `pyproject.toml`, commit, and create a GitHub release for tag `vX.Y.Z`
+1. Bump `version` in `pyproject.toml` and both versions in `server.json` (`tests/test_packaging.py`
+   fails if they differ), commit, and create a GitHub release for tag `vX.Y.Z`
    (the `/release` skill or `release.sh` does the tag + `gh release create`).
-2. The `release: published` event triggers `.github/workflows/publish.yml`, which tests → builds →
-   publishes to **PyPI** (`pypa/gh-action-pypi-publish`, OIDC) → publishes to the **MCP Registry**
-   (`mcp-publisher login github-oidc`), injecting the tag version into `server.json` at publish time.
+2. The `release: published` event triggers `.github/workflows/publish.yml`, which tests → checks the
+   tag matches the package version → builds → publishes to **PyPI** (`pypa/gh-action-pypi-publish`,
+   OIDC) → publishes `server.json` to the **MCP Registry** (`mcp-publisher login github-oidc`).
+   A manual run of the workflow skips the PyPI upload if that version already exists, so it can
+   retry a failed registry publish.
 
 The package publishes to PyPI as `spotify-mcp-jamiew` and to the registry as `io.github.jamiew/spotify-mcp`.
 
@@ -58,9 +66,9 @@ One-time setup (already required before the first successful run):
 FastMCP-based MCP server for Spotify Web API integration using Python/`uv`.
 
 The Cloudflare sibling is the canonical development direction: a shared TypeScript core
-with local stdio and hosted adapters. Python remains supported, not deprecated. The sibling
-`updates` PR adds local PKCE login, output schemas, search offset, snapshot reorder guards,
-bounded bulk playlist reads/progress and removal elicitation; do not call PR code deployed.
+with local stdio and hosted adapters. Python remains supported, not deprecated. The sibling's
+merged `updates` PR added local PKCE login, output schemas, search offset, snapshot reorder guards,
+bounded bulk playlist reads/progress and removal elicitation; do not assume it is deployed.
 Python retains six resource declarations, five prompts and best-effort playback confirmation.
 Tool names do not imply matching arguments, limits or result shapes; see the
 [README comparison](README.md#moving-between-implementations). Preserve Python's distinctive
@@ -78,7 +86,7 @@ requested.
 - **`scripts/spotify_api_watch.py`** - Changelog probe behind the `/spotify-api-watch` skill
 
 ### Key Features
-- **MCP Tools**: Playback control, search, queue management, playlist operations, track/artist info
+- **MCP Tools**: Playback control, search, queue management, playlist operations, track/artist/album info, and library tools for liked songs, albums, followed artists, podcasts and audiobooks
 - **Structured Output**: Every tool returns a typed Pydantic model (real output schema)
 - **Tool Annotations & Icons**: read-only/destructive hints, titles, and a Spotify glyph on tools/resources/prompts
 - **Progress & Elicitation**: progress notifications for large paginations; confirmation prompts before destructive playlist removals (when the client supports it)
@@ -96,7 +104,7 @@ requested.
 - **Type Safety**: Use strict type hints and Pydantic validation
 
 ### Code Quality Standards
-- Run `mypy` and `pytest` before every commit
+- Run the quality gates above before every commit
 - Convert Spotify exceptions to MCP-compliant errors, and never drop Spotify's `reason`
 - Include Args/Returns in all tool docstrings
 

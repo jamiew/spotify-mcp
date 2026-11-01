@@ -151,8 +151,8 @@ jobs:
         # Test that entry point is installed and accessible
         docker run --rm spotify-mcp:test which spotify-mcp
         
-        # Test that application starts without errors (with proper env vars)
-        docker run --rm -e SPOTIFY_CLIENT_ID=test -e SPOTIFY_CLIENT_SECRET=test -e SPOTIFY_REDIRECT_URI=http://localhost:8888 spotify-mcp:test python -c "print('✅ Docker image works correctly')"
+        # Test that the server module imports with its installed dependencies
+        docker run --rm -e SPOTIFY_CLIENT_ID=test -e SPOTIFY_CLIENT_SECRET=test -e SPOTIFY_REDIRECT_URI=http://localhost:8888 spotify-mcp:test python -c "import spotify_mcp.fastmcp_server"
         
         # Test security: ensure running as non-root user
         docker run --rm spotify-mcp:test sh -c 'whoami | grep -v root'
