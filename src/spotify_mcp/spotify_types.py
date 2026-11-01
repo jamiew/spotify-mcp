@@ -54,6 +54,10 @@ class TrackObject(_TrackRequired, total=False):
     popularity: int
     external_urls: ExternalUrls
     is_local: bool
+    # "track" or "episode": the player, queue and playlists can return either.
+    type: str
+    # Episodes carry their show (and no artists or album).
+    show: ShowObject
 
 
 class _ArtistRequired(TypedDict):
@@ -107,3 +111,60 @@ class PlaylistObject(_PlaylistRequired, total=False):
     description: str
     public: bool
     tracks: TrackPage
+
+
+class _ShowRequired(TypedDict):
+    name: str
+    id: str
+
+
+class ShowObject(_ShowRequired, total=False):
+    # Restricted apps lose `publisher`.
+    publisher: str
+    description: str
+    total_episodes: int
+    media_type: str
+    explicit: bool
+    external_urls: ExternalUrls
+
+
+class ResumePoint(TypedDict, total=False):
+    fully_played: bool
+    resume_position_ms: int
+
+
+class _EpisodeRequired(TypedDict):
+    name: str
+
+
+class EpisodeObject(_EpisodeRequired, total=False):
+    id: str
+    description: str
+    release_date: str
+    duration_ms: int
+    explicit: bool
+    resume_point: ResumePoint
+    external_urls: ExternalUrls
+    # Only present on full episode objects (saved episodes), not on a show's list.
+    show: ShowObject
+
+
+class NamedRef(TypedDict, total=False):
+    name: str
+
+
+class _AudiobookRequired(TypedDict):
+    name: str
+    id: str
+
+
+class AudiobookObject(_AudiobookRequired, total=False):
+    authors: list[NamedRef]
+    narrators: list[NamedRef]
+    # Restricted apps lose `publisher`.
+    publisher: str
+    description: str
+    edition: str
+    total_chapters: int
+    explicit: bool
+    external_urls: ExternalUrls

@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+- `control_playback` and `add_to_queue` keep podcast episodes: `spotify:episode:` URIs and
+  episode share URLs were coerced into `spotify:track:` URIs and rejected by Spotify. Bare
+  IDs are still treated as tracks; an album, show or playlist passed as an item is refused
+  with a pointer to `context_uri`. Show, album and playlist context URIs pass through as before.
+- `add_tracks_to_playlist` and `remove_tracks_from_playlist` keep episode URIs and episode
+  share URLs too, on both the `/items` and the legacy `/tracks` routes. Bare IDs are still
+  tracks.
+- `get_playback_state`, the `spotify://playback/current` resource and the skip check in
+  `control_playback` now ask for `additional_types=track,episode`. Before, a playing podcast
+  episode came back as playing with no track. Episodes in playback and in `get_queue` are
+  returned with `type: "episode"`, the show name in `artist` and `show`, and `show_id`;
+  `Track` gains the optional `type`, `show` and `show_id` fields. `PlaybackState` gains
+  `currently_playing_type`, which explains a playing state with no item (for example an ad).
+- Request the `user-follow-modify` scope, which the `/me/library` writes and the legacy
+  follow routes need for artist and playlist follows. **Existing users must reauthorize**:
+  restart the server and complete Spotify consent again. No auth cache is deleted
+  automatically.
+- New album and artist library tools: `get_saved_albums` (paginated), `save_albums` and
+  `remove_saved_albums` (20 per call), `get_followed_artists` (cursor-paginated via `after`),
+  `follow_artists` and `unfollow_artists` (50 per call). New `follow_playlist` is the
+  counterpart to `unfollow_playlist`. Writes prefer `/me/library` and fall back to the
+  entity routes on legacy apps, in upstream chunks of 40; a failed chunk propagates.
+- New podcast tools: `get_saved_shows`, `save_shows`, `remove_saved_shows` and
+  `check_saved_shows` (50 per call), `get_show_episodes` (paginated, with the user's resume
+  point), `get_saved_episodes`, `save_episodes` and `remove_saved_episodes` (50 per call).
+  `publisher` is optional because restricted apps lose it.
+- New audiobook tools: `get_saved_audiobooks` (paginated), `save_audiobooks` and
+  `remove_saved_audiobooks` (50 per call). The February 2026 reference still lists
+  `GET /me/audiobooks`, and audiobook URIs on `PUT`/`DELETE /me/library`; legacy apps fall back
+  to `/me/audiobooks`. Audiobooks are only offered in some Spotify markets.
+- New `check_saved_episodes` and `check_saved_audiobooks` (50 per call), on
+  `/me/library/contains` with the `/me/episodes/contains` and `/me/audiobooks/contains`
+  fallbacks.
+- `get_playlist_tracks` asks for `additional_types=track,episode` on both the `/items` and
+  legacy `/tracks` routes, so podcast episodes in a playlist come back as episodes. The legacy
+  route no longer goes through spotipy's deprecated `playlist_tracks`.
+- `save_tracks` and `remove_saved_tracks` now reject an empty list, like the other library
+  writes.
+- Checked live: artist, album and episode writes and checks on a restricted app; library
+  and playlist reads on the maintainer's app. Not yet live-checked: `follow_playlist`, show
+  and audiobook writes, and playing, queueing or adding an episode.
+
 ## 2026-09-20 — 0.7.0
 - Request `user-follow-read` and prefer artist URIs on `/me/library/contains`, with the
   legacy `/me/following/contains` fallback. Existing users must reauthorize for the scope;

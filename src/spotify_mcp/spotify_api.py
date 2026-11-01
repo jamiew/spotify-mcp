@@ -82,8 +82,10 @@ SCOPES = [
     # Library
     "user-library-read",
     "user-library-modify",
-    # Artist follows (including the consolidated library membership route)
+    # Artist follows (including the consolidated library membership route).
+    # /me/library writes list user-follow-modify alongside user-library-modify.
     "user-follow-read",
+    "user-follow-modify",
     # History
     "user-read-playback-position",
     "user-top-read",
@@ -185,7 +187,14 @@ def with_fallback[T](
 # is the known case. This is a different shape from `with_fallback`: there is no
 # alternative path to swap in, only a different number of requests. Remember a
 # withheld kind so the 403 is paid once per process instead of on every call.
-BATCH_LIMITS: dict[str, int] = {"track": 50, "artist": 50, "album": 20}
+BATCH_LIMITS: dict[str, int] = {
+    "track": 50,
+    "artist": 50,
+    "album": 20,
+    "show": 50,
+    "episode": 50,
+    "audiobook": 50,
+}
 _batch_withheld: set[str] = set()
 
 
@@ -240,12 +249,18 @@ def get_albums(sp: spotipy.Spotify, album_ids: list[str]) -> list[dict]:
 def playlist_items(
     sp: spotipy.Spotify, playlist_id: str, *, limit: int, offset: int
 ) -> dict:
-    """Read a page of playlist entries. Restricted serves /items, legacy /tracks."""
+    """Read a page of playlist entries. Restricted serves /items, legacy /tracks.
+
+    Both routes return podcast episodes in playlists only when additional_types
+    asks for them. spotipy's `playlist_tracks` asks for tracks alone, and its
+    `playlist_items` targets /items, so the legacy path is spelled out here.
+    """
     pid = to_id(playlist_id)
+    params = {"limit": limit, "offset": offset, "additional_types": "track,episode"}
     return with_fallback(
         "playlist-items",
-        lambda: sp._get(f"playlists/{pid}/items", limit=limit, offset=offset),
-        lambda: sp.playlist_tracks(pid, limit=limit, offset=offset),
+        lambda: sp._get(f"playlists/{pid}/items", **params),
+        lambda: sp._get(f"playlists/{pid}/tracks", **params),
     )
 
 
@@ -365,6 +380,105 @@ def unfollow_playlist(sp: spotipy.Spotify, playlist_id: str) -> None:
     )
 
 
+# Legacy routes for the library kinds that never had a /me/library shape. Every
+# one takes a query string of bare ids (shows and audiobooks document no body at
+# all); albums cap that query at 20, which the album tools already enforce.
+_LEGACY_LIBRARY_ROUTES: dict[str, tuple[str, dict[str, str]]] = {
+    "album": ("me/albums", {}),
+    "artist": ("me/following", {"type": "artist"}),
+    "show": ("me/shows", {}),
+    "episode": ("me/episodes", {}),
+    "audiobook": ("me/audiobooks", {}),
+}
+
+# The /me/library reference lists artist URIs for `contains` but not for PUT or
+# DELETE, while the February 2026 changelog names /me/library as the replacement
+# for PUT/DELETE /me/following. Keep artist writes in their own family so an
+# artist-specific rejection cannot pin every other library write to legacy.
+_LIBRARY_WRITE_FAMILY = {"artist": "follow-write"}
+
+
+def _library_write(
+    sp: spotipy.Spotify, method: str, kind: str, item_ids: list[str]
+) -> None:
+    """PUT or DELETE library items in chunks of 40; propagate any failed chunk."""
+    send = sp._put if method == "PUT" else sp._delete
+    legacy_path, legacy_params = _LEGACY_LIBRARY_ROUTES[kind]
+    family = _LIBRARY_WRITE_FAMILY.get(kind, "library-write")
+    for start in range(0, len(item_ids), _LIBRARY_BATCH_LIMIT):
+        ids = [to_id(i) for i in item_ids[start : start + _LIBRARY_BATCH_LIMIT]]
+        uris = ",".join(to_uri(kind, i) for i in ids)
+        with_fallback(
+            family,
+            partial(send, "me/library", uris=uris),
+            partial(send, legacy_path, ids=",".join(ids), **legacy_params),
+        )
+
+
+def save_albums(sp: spotipy.Spotify, album_ids: list[str]) -> None:
+    """Save albums to the library; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "PUT", "album", album_ids)
+
+
+def remove_saved_albums(sp: spotipy.Spotify, album_ids: list[str]) -> None:
+    """Remove saved albums; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "DELETE", "album", album_ids)
+
+
+def follow_artists(sp: spotipy.Spotify, artist_ids: list[str]) -> None:
+    """Follow artists; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "PUT", "artist", artist_ids)
+
+
+def unfollow_artists(sp: spotipy.Spotify, artist_ids: list[str]) -> None:
+    """Unfollow artists; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "DELETE", "artist", artist_ids)
+
+
+def save_shows(sp: spotipy.Spotify, show_ids: list[str]) -> None:
+    """Save podcast shows; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "PUT", "show", show_ids)
+
+
+def remove_saved_shows(sp: spotipy.Spotify, show_ids: list[str]) -> None:
+    """Remove saved podcast shows; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "DELETE", "show", show_ids)
+
+
+def save_episodes(sp: spotipy.Spotify, episode_ids: list[str]) -> None:
+    """Save podcast episodes; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "PUT", "episode", episode_ids)
+
+
+def remove_saved_episodes(sp: spotipy.Spotify, episode_ids: list[str]) -> None:
+    """Remove saved podcast episodes; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "DELETE", "episode", episode_ids)
+
+
+def save_audiobooks(sp: spotipy.Spotify, audiobook_ids: list[str]) -> None:
+    """Save audiobooks; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "PUT", "audiobook", audiobook_ids)
+
+
+def remove_saved_audiobooks(sp: spotipy.Spotify, audiobook_ids: list[str]) -> None:
+    """Remove saved audiobooks; earlier chunks are not rolled back on failure."""
+    _library_write(sp, "DELETE", "audiobook", audiobook_ids)
+
+
+def follow_playlist(sp: spotipy.Spotify, playlist_id: str) -> None:
+    """Restricted folds playlist follows into /me/library; legacy has its own route.
+
+    The legacy route takes an optional `public` body that defaults to true; none
+    is sent, so both regimes leave visibility to Spotify's default.
+    """
+    pid = to_id(playlist_id)
+    with_fallback(
+        "library-write",
+        lambda: sp._put("me/library", uris=to_uri("playlist", pid)),
+        lambda: sp._put(f"playlists/{pid}/followers"),
+    )
+
+
 def _library_contains(
     sp: spotipy.Spotify, kind: str, item_ids: list[str]
 ) -> list[bool]:
@@ -397,6 +511,23 @@ def saved_tracks_contains(sp: spotipy.Spotify, track_ids: list[str]) -> list[boo
 def saved_albums_contains(sp: spotipy.Spotify, album_ids: list[str]) -> list[bool]:
     """Which of up to 20 albums are saved, preserving requested order."""
     return _library_contains(sp, "album", album_ids)
+
+
+def saved_shows_contains(sp: spotipy.Spotify, show_ids: list[str]) -> list[bool]:
+    """Which podcast shows are saved, with at most 40 URIs per upstream request."""
+    return _library_contains(sp, "show", show_ids)
+
+
+def saved_episodes_contains(sp: spotipy.Spotify, episode_ids: list[str]) -> list[bool]:
+    """Which podcast episodes are saved, with at most 40 URIs per upstream request."""
+    return _library_contains(sp, "episode", episode_ids)
+
+
+def saved_audiobooks_contains(
+    sp: spotipy.Spotify, audiobook_ids: list[str]
+) -> list[bool]:
+    """Which audiobooks are saved, with at most 40 URIs per upstream request."""
+    return _library_contains(sp, "audiobook", audiobook_ids)
 
 
 def following_artists_contains(

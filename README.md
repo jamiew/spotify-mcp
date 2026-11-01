@@ -60,14 +60,15 @@ In the config above, change `command` to `uv` and `args` to
 Keep the same environment variables. Without cloning, use
 `uvx --from git+https://github.com/jamiew/spotify-mcp.git spotify-mcp`.
 
-**Reauthorization:** artist-follow checks need `user-follow-read`. Existing grants do not
+**Reauthorization:** artist-follow checks need `user-follow-read`, and following or
+unfollowing artists and playlists needs `user-follow-modify`. Existing grants do not
 receive new scopes automatically. Restart and complete Spotify authorization when prompted;
 if access is still denied, review the app's grant in your Spotify account and reauthorize.
 Do not automatically delete the auth cache.
 
 ## Features
 
-28 tools, six resources (user, playback, track, playlist, artist, album), and five prompts.
+48 tools, six resources (user, playback, track, playlist, artist, album), and five prompts.
 Tools provide typed outputs and behavior annotations; large playlist reads report progress.
 Playlist removal asks for confirmation where supported, reordering uses snapshot guards,
 and playback control attempts best-effort read-after-write confirmation, not guaranteed success.
@@ -80,20 +81,21 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 | `get_tracks` | Read up to 50 tracks; individual reads when batching is unavailable |
 | `get_artist` | Read up to 50 artists; top tracks for a single artist |
 | `get_album` | Read up to 20 albums; track list for a single album |
-| `get_playback_state` | Read current track, device, progress, shuffle, and repeat |
-| `control_playback` | Play, pause, skip, seek, volume, shuffle, and repeat |
+| `get_playback_state` | Read current track or episode, device, progress, shuffle, and repeat |
+| `control_playback` | Play tracks, episodes or a context; pause, skip, seek, volume, shuffle, repeat |
 | `list_devices` | List Spotify Connect devices |
 | `transfer_playback` | Move playback to another device |
-| `get_queue` | Read now playing and upcoming tracks |
-| `add_to_queue` | Queue a track |
+| `get_queue` | Read now playing and upcoming tracks and episodes |
+| `add_to_queue` | Queue a track or podcast episode |
 | `list_playlists` | List your playlists with pagination |
 | `get_playlist` | Read playlist metadata without tracks |
 | `get_playlist_tracks` | Read playlist tracks with pagination |
 | `create_playlist` | Create a private playlist; set `public=true` to publish |
 | `update_playlist_details` | Change name, description, or visibility |
-| `add_tracks_to_playlist` | Add up to 100 tracks |
-| `remove_tracks_from_playlist` | Remove tracks with confirmation where supported |
+| `add_tracks_to_playlist` | Add up to 100 tracks or episodes |
+| `remove_tracks_from_playlist` | Remove tracks or episodes with confirmation where supported |
 | `reorder_playlist` | Move a block of tracks |
+| `follow_playlist` | Follow (save) a playlist |
 | `unfollow_playlist` | Unfollow a playlist, including your own |
 | `get_saved_tracks` | Read Liked Songs with pagination |
 | `save_tracks` | Like tracks |
@@ -101,6 +103,25 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 | `check_saved_tracks` | Check up to 50 tracks against Liked Songs |
 | `check_saved_albums` | Check up to 20 saved albums |
 | `check_following_artists` | Check up to 50 followed artists |
+| `get_saved_albums` | Read saved albums with pagination |
+| `save_albums` | Save up to 20 albums |
+| `remove_saved_albums` | Remove up to 20 saved albums |
+| `get_followed_artists` | Read followed artists with cursor pagination |
+| `follow_artists` | Follow up to 50 artists |
+| `unfollow_artists` | Unfollow up to 50 artists |
+| `get_saved_shows` | Read saved podcast shows with pagination |
+| `save_shows` | Save up to 50 podcast shows |
+| `remove_saved_shows` | Remove up to 50 saved podcast shows |
+| `check_saved_shows` | Check up to 50 saved podcast shows |
+| `get_show_episodes` | Read a show's episodes with resume points and pagination |
+| `get_saved_episodes` | Read saved podcast episodes with pagination |
+| `check_saved_episodes` | Check up to 50 saved podcast episodes |
+| `save_episodes` | Save up to 50 podcast episodes |
+| `remove_saved_episodes` | Remove up to 50 saved podcast episodes |
+| `get_saved_audiobooks` | Read saved audiobooks with pagination |
+| `check_saved_audiobooks` | Check up to 50 saved audiobooks |
+| `save_audiobooks` | Save up to 50 audiobooks |
+| `remove_saved_audiobooks` | Remove up to 50 saved audiobooks |
 | `get_top_items` | Read top artists or tracks over a time range |
 | `get_recently_played` | Read recently played tracks with timestamps |
 
@@ -108,8 +129,9 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 
 - **New playlists default to private.** Existing playlists are unchanged. Spotify can report
   unexpected visibility, so confirm sensitive playlists in the Spotify app.
-- Track saves/removals and track/artist membership checks accept **50 items**, sent upstream
-  in batches of **40**. Album checks accept **20**. Membership results preserve input
+- Library writes (tracks, artists, shows, episodes, audiobooks) and membership checks
+  accept **50 items**, sent upstream in batches of **40**. Album saves, removals and checks
+  accept **20**. Membership results preserve input
   alignment; incomplete chunks fail. Writes are not atomic across chunks: earlier changes
   may remain after an error. Check membership before retrying.
 - Restricted apps cap search pages at **10**. Advance by the returned `offset + limit`, not
