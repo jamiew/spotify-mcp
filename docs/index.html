@@ -560,7 +560,7 @@
             <p class="install-meta">
                 The Python server remains supported. <a href="https://github.com/jamiew/spotify-mcp-cloudflare">Cloudflare / TypeScript</a>
                 is the canonical development direction for a shared local and hosted core.
-                Its <code>updates</code> PR is not a deployment announcement; tool contracts differ.
+                Its merged <code>updates</code> PR is not a deployment announcement; tool contracts differ.
             </p>
             <div class="cta-row" data-reveal style="--d:0.3s">
                 <a class="btn btn-primary" href="#install">
@@ -609,7 +609,7 @@
                 <div class="feature" data-reveal>
                     <svg class="ficon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
                     <h3>Real-time state</h3>
-                    <p>Read live playback status and profile data, plus detailed track and artist info on demand.</p>
+                    <p>Read live playback status and profile data, plus track, artist, album, podcast and audiobook details on demand.</p>
                 </div>
             </div>
         </section>
@@ -625,10 +625,10 @@
                 <div class="label">Playback &amp; queue</div>
                 <div class="tool-list">
                     <div class="tool"><code>get_playback_state</code><span>What's playing now, on which device</span></div>
-                    <div class="tool"><code>control_playback</code><span>Play, pause, skip, seek, volume, shuffle, repeat</span></div>
+                    <div class="tool"><code>control_playback</code><span>Play tracks, episodes or a context; pause, skip, seek, volume, shuffle, repeat</span></div>
                     <div class="tool"><code>list_devices</code><span>See every device you can play on</span></div>
                     <div class="tool"><code>transfer_playback</code><span>Move playback to another device</span></div>
-                    <div class="tool"><code>add_to_queue</code><span>Queue up tracks for the active device</span></div>
+                    <div class="tool"><code>add_to_queue</code><span>Queue a track or podcast episode on the active device</span></div>
                     <div class="tool"><code>get_queue</code><span>View the current playback queue</span></div>
                     <div class="tool"><code>get_tracks</code><span>Up to 50 tracks in one request</span></div>
                     <div class="tool"><code>get_artist</code><span>Up to 50 artists in one request; top tracks for a single artist</span></div>
@@ -647,8 +647,33 @@
                     <div class="tool"><code>check_saved_tracks</code><span>Which of up to 50 tracks are already liked</span></div>
                     <div class="tool"><code>check_saved_albums</code><span>Which of up to 20 albums are already saved</span></div>
                     <div class="tool"><code>check_following_artists</code><span>Which of up to 50 artists the user follows</span></div>
+                    <div class="tool"><code>get_saved_albums</code><span>Your saved albums, paginated</span></div>
+                    <div class="tool"><code>save_albums</code><span>Save up to 20 albums</span></div>
+                    <div class="tool"><code>remove_saved_albums</code><span>Remove up to 20 saved albums</span></div>
+                    <div class="tool"><code>get_followed_artists</code><span>Artists you follow, with cursor pagination</span></div>
+                    <div class="tool"><code>follow_artists</code><span>Follow up to 50 artists</span></div>
+                    <div class="tool"><code>unfollow_artists</code><span>Unfollow up to 50 artists</span></div>
                     <div class="tool"><code>get_top_items</code><span>Your top artists or tracks over any time range</span></div>
                     <div class="tool"><code>get_recently_played</code><span>What you played lately, with timestamps</span></div>
+                </div>
+            </div>
+
+            <div class="tool-group" data-reveal>
+                <div class="label">Podcasts &amp; audiobooks</div>
+                <div class="tool-list">
+                    <div class="tool"><code>get_saved_shows</code><span>Your saved podcast shows, paginated</span></div>
+                    <div class="tool"><code>save_shows</code><span>Save up to 50 podcast shows</span></div>
+                    <div class="tool"><code>remove_saved_shows</code><span>Remove up to 50 saved podcast shows</span></div>
+                    <div class="tool"><code>check_saved_shows</code><span>Which of up to 50 shows are already saved</span></div>
+                    <div class="tool"><code>get_show_episodes</code><span>A show's episodes with your resume points, paginated</span></div>
+                    <div class="tool"><code>get_saved_episodes</code><span>Your saved podcast episodes, paginated</span></div>
+                    <div class="tool"><code>check_saved_episodes</code><span>Which of up to 50 episodes are already saved</span></div>
+                    <div class="tool"><code>save_episodes</code><span>Save up to 50 podcast episodes</span></div>
+                    <div class="tool"><code>remove_saved_episodes</code><span>Remove up to 50 saved podcast episodes</span></div>
+                    <div class="tool"><code>get_saved_audiobooks</code><span>Your saved audiobooks, paginated</span></div>
+                    <div class="tool"><code>check_saved_audiobooks</code><span>Which of up to 50 audiobooks are already saved</span></div>
+                    <div class="tool"><code>save_audiobooks</code><span>Save up to 50 audiobooks</span></div>
+                    <div class="tool"><code>remove_saved_audiobooks</code><span>Remove up to 50 saved audiobooks</span></div>
                 </div>
             </div>
 
@@ -659,10 +684,11 @@
                     <div class="tool"><code>get_playlist</code><span>Playlist metadata and details</span></div>
                     <div class="tool"><code>get_playlist_tracks</code><span>Retrieve tracks with full pagination for large playlists</span></div>
                     <div class="tool"><code>list_playlists</code><span>List all your playlists with pagination</span></div>
-                    <div class="tool"><code>add_tracks_to_playlist</code><span>Batch-add tracks in a single operation</span></div>
-                    <div class="tool"><code>remove_tracks_from_playlist</code><span>Batch-remove tracks from a playlist</span></div>
+                    <div class="tool"><code>add_tracks_to_playlist</code><span>Add up to 100 tracks or episodes in one operation</span></div>
+                    <div class="tool"><code>remove_tracks_from_playlist</code><span>Remove tracks or episodes from a playlist</span></div>
                     <div class="tool"><code>update_playlist_details</code><span>Update name, description, and privacy</span></div>
                     <div class="tool"><code>reorder_playlist</code><span>Move tracks to a new position within a playlist</span></div>
+                    <div class="tool"><code>follow_playlist</code><span>Save a playlist to your library</span></div>
                     <div class="tool"><code>unfollow_playlist</code><span>Remove a playlist from your library</span></div>
                 </div>
             </div>
@@ -790,9 +816,9 @@
             <div class="section-head">
                 <span class="eyebrow">Before connecting</span>
                 <h2>Supported locally, compatible deliberately.</h2>
-                <p>Python keeps six resources, five prompts and playback confirmation. The sibling updates PR adds local PKCE login, output schemas, search offset, snapshot guards, bulk playlist progress and removal confirmation, but matching names are not matching contracts. Read the <a href="https://github.com/jamiew/spotify-mcp#moving-between-implementations">migration comparison</a> before switching.</p>
+                <p>Python keeps six resources, five prompts and playback confirmation. The sibling's merged updates PR added local PKCE login, output schemas, search offset, snapshot guards, bulk playlist progress and removal confirmation, but matching names are not matching contracts. Read the <a href="https://github.com/jamiew/spotify-mcp#moving-between-implementations">migration comparison</a> before switching.</p>
             </div>
-            <p>New playlists are intentionally private by default. Track writes and track/artist checks still accept 50 items per tool call, in upstream chunks of at most 40; album checks remain capped at 20. Failed writes can leave earlier chunks applied. Artist membership needs <code>user-follow-read</code>: restart and reauthorize Spotify for the new scope, without automatically deleting your auth cache.</p>
+            <p>New playlists are intentionally private by default. Library writes and membership checks accept 50 items per tool call (albums 20), in upstream chunks of at most 40. Failed writes can leave earlier chunks applied. Artist follow checks need <code>user-follow-read</code>, and following artists or playlists needs <code>user-follow-modify</code>: restart and reauthorize Spotify once for the new scopes, without automatically deleting your auth cache.</p>
             <p>The <a href="https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security">March 9 update</a> postponed endpoint restrictions for existing integrations; Extended Quota Mode is exempt from February's endpoint changes. The <a href="https://developer.spotify.com/documentation/web-api/references/changes/march-2026">March changelog</a> reversed external-ID removal. Access depends on the app, not just the date. The official TypeScript SDK's <a href="https://unpkg.com/@spotify/web-api-ts-sdk@1.2.0/dist/mjs/endpoints/PlaylistsEndpoints.js">1.2.0 playlist code</a> still uses legacy routes; switching SDKs does not remove compatibility work.</p>
             <p>The <a href="https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates">July quota update</a> permits 25 apps but shares one Development Mode quota per developer account. <code>QUOTA_EXCEEDED</code> is not ordinary rate limiting; no daily or 24-hour reset is guaranteed. <a href="https://developer.spotify.com/documentation/web-api/concepts/quota-modes">Development Mode</a> normally permits five allowlisted users with a Premium owner, with older larger allowlists grandfathered. Extended access requires an organization, established entity, launched service and at least 250,000 monthly active users. Never share a local token cache or treat a public URL as unrestricted hosting permission.</p>
             <p><strong>AI policy is a separate gate.</strong> <a href="https://developer.spotify.com/policy">Spotify Developer Policy III.14</a> restricts ingesting Spotify Content into AI models, not just training. Metadata-only use is not automatic clearance. Analysis and derived metrics (III.13) and voice-control assistants (III.3) also face restrictions. Seek Spotify clarification or approval before public AI access; this project does not establish permission.</p>

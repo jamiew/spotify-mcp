@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 2026-11-01 — 0.8.0
+- Thanks to [@mindrunner](https://github.com/mindrunner) for the album, artist, podcast and
+  audiobook library tools ([#27](https://github.com/jamiew/spotify-mcp/pull/27)), and to
+  [@jonico](https://github.com/jonico) for diagnosing the restricted-app artist follow check
+  ([#24](https://github.com/jamiew/spotify-mcp/pull/24)) that shipped in 0.7.0.
+- **Existing users must reauthorize once** for the new `user-follow-modify` scope: restart
+  the server and complete Spotify consent again.
+- 20 new tools (48 total) for saved albums, followed artists, playlist follows, podcast
+  shows and episodes, and audiobooks. Playback, the queue and playlists now handle podcast
+  episodes.
 - `control_playback` and `add_to_queue` keep podcast episodes: `spotify:episode:` URIs and
   episode share URLs were coerced into `spotify:track:` URIs and rejected by Spotify. Bare
   IDs are still treated as tracks; an album, show or playlist passed as an item is refused
