@@ -445,6 +445,11 @@ class TestLibraryWrites:
         ]
 
 
+def library_uri(kind: str, item_id: str) -> str:
+    """The URI /me/library expects: it 500s on audiobook URIs, takes them as shows."""
+    return f"spotify:{'show' if kind == 'audiobook' else kind}:{item_id}"
+
+
 # (operation, method, uri kind, legacy path, extra legacy query params)
 LIBRARY_WRITES = [
     (spotify_api.save_albums, "PUT", "album", "me/albums", {}),
@@ -485,7 +490,7 @@ class TestEntityLibraryWrites:
         operation(sp, ["a1", f"spotify:{kind}:a2"])
 
         _sender(sp, method).assert_called_once_with(
-            "me/library", uris=f"spotify:{kind}:a1,spotify:{kind}:a2"
+            "me/library", uris=f"{library_uri(kind, 'a1')},{library_uri(kind, 'a2')}"
         )
 
     @pytest.mark.parametrize(
@@ -631,7 +636,7 @@ class TestMembershipReads:
 
         assert sp._get.call_args_list[0].args == ("me/library/contains",)
         assert sp._get.call_args_list[0].kwargs == {
-            "uris": f"spotify:{kind}:x1,spotify:{kind}:x2"
+            "uris": f"{library_uri(kind, 'x1')},{library_uri(kind, 'x2')}"
         }
         assert sp._get.call_args_list[-1].args == (legacy_path,)
         assert sp._get.call_args_list[-1].kwargs == {"ids": "x1,x2"}
@@ -740,7 +745,7 @@ class TestLibraryHTTP:
         sp, request = self._client(respond)
         operation(sp, [f"id{i}" for i in range(50)])
 
-        assert received == [f"spotify:{kind}:id{i}" for i in range(50)]
+        assert received == [library_uri(kind, f"id{i}") for i in range(50)]
         assert request.call_count == 2
 
     def test_legacy_artist_follow_sends_type_and_ids_as_a_query(self):
@@ -828,7 +833,7 @@ class TestLibraryHTTP:
         sp, _ = self._client(respond)
 
         assert operation(sp, [f"id{i}" for i in range(count)]) == expected
-        assert received == [f"spotify:{kind}:id{i}" for i in range(count)]
+        assert received == [library_uri(kind, f"id{i}") for i in range(count)]
 
     def test_legacy_fallback_chunks_preserve_track_order(self):
         received = []

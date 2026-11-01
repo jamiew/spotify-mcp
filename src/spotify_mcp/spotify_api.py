@@ -397,6 +397,16 @@ _LEGACY_LIBRARY_ROUTES: dict[str, tuple[str, dict[str, str]]] = {
 # artist-specific rejection cannot pin every other library write to legacy.
 _LIBRARY_WRITE_FAMILY = {"artist": "follow-write"}
 
+# /me/library answers 500/502 for `spotify:audiobook:` URIs but accepts the same
+# id as `spotify:show:` (verified live, Nov 2026). Audiobooks are shows there.
+_LIBRARY_URI_KIND = {"audiobook": "show"}
+
+
+def _library_uris(kind: str, ids: list[str]) -> str:
+    """The comma-separated URIs /me/library expects for `ids` of `kind`."""
+    uri_kind = _LIBRARY_URI_KIND.get(kind, kind)
+    return ",".join(to_uri(uri_kind, i) for i in ids)
+
 
 def _library_write(
     sp: spotipy.Spotify, method: str, kind: str, item_ids: list[str]
@@ -407,7 +417,7 @@ def _library_write(
     family = _LIBRARY_WRITE_FAMILY.get(kind, "library-write")
     for start in range(0, len(item_ids), _LIBRARY_BATCH_LIMIT):
         ids = [to_id(i) for i in item_ids[start : start + _LIBRARY_BATCH_LIMIT]]
-        uris = ",".join(to_uri(kind, i) for i in ids)
+        uris = _library_uris(kind, ids)
         with_fallback(
             family,
             partial(send, "me/library", uris=uris),
@@ -486,7 +496,7 @@ def _library_contains(
     results: list[bool] = []
     for start in range(0, len(item_ids), _LIBRARY_BATCH_LIMIT):
         ids = [to_id(i) for i in item_ids[start : start + _LIBRARY_BATCH_LIMIT]]
-        uris = ",".join(to_uri(kind, i) for i in ids)
+        uris = _library_uris(kind, ids)
         legacy_path = f"me/{kind}s/contains"
         legacy_params = {"ids": ",".join(ids)}
         if kind == "artist":

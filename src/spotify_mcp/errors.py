@@ -114,7 +114,9 @@ class SpotifyMCPError(Exception):
         # exhausts its retries, whatever status was actually retried. We only retry
         # 500/502/503/504, so this is an outage, not a quota problem — reporting it
         # as rate limiting sends the caller off to back off on the wrong thing.
-        if status_code == 429 and error_message.rstrip().endswith("Max Retries"):
+        # Check `msg`: `str(exc)` appends ", reason: too many 500 error responses".
+        retry_msg = str(getattr(exc, "msg", ""))
+        if status_code == 429 and retry_msg.rstrip().endswith("Max Retries"):
             return cls(
                 SpotifyMCPErrorCode.API_UNAVAILABLE,
                 "Spotify API is temporarily unavailable (retries exhausted)",
