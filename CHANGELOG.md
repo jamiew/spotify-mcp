@@ -34,8 +34,14 @@
 - New `check_saved_episodes` and `check_saved_audiobooks` (50 per call), on
   `/me/library/contains` with the `/me/episodes/contains` and `/me/audiobooks/contains`
   fallbacks.
-- Spotify behaviour behind the new tools is covered by request-level tests against mocked
-  responses for both regimes only; it has not been verified against the live API yet.
+- `get_playlist_tracks` asks for `additional_types=track,episode` on both the `/items` and
+  legacy `/tracks` routes, so podcast episodes in a playlist come back as episodes. The legacy
+  route no longer goes through spotipy's deprecated `playlist_tracks`.
+- `save_tracks` and `remove_saved_tracks` now reject an empty list, like the other library
+  writes.
+- Checked live: artist, album and episode writes and checks on a restricted app; library
+  and playlist reads on the maintainer's app. Not yet live-checked: `follow_playlist`, show
+  and audiobook writes, and playing, queueing or adding an episode.
 
 ## 2026-09-20 — 0.7.0
 - Request `user-follow-read` and prefer artist URIs on `/me/library/contains`, with the

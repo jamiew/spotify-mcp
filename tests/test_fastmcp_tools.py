@@ -1264,7 +1264,10 @@ class TestGetPlaylistTracks:
         assert result.total == 2
         assert result.returned == 2
         mock_spotify_api._get.assert_called_with(
-            "playlists/pl1/items", limit=50, offset=0
+            "playlists/pl1/items",
+            limit=50,
+            offset=0,
+            additional_types="track,episode",
         )
 
     async def test_zero_limit_returns_no_tracks(
@@ -1374,7 +1377,6 @@ class TestGetPlaylistTracks:
     async def test_spotify_error(self, mock_spotify_api):
         # Both regime shapes fail, so this is a real error rather than a fallback
         mock_spotify_api._get.side_effect = SPOTIFY_ERROR
-        mock_spotify_api.playlist_tracks.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
             await get_playlist_tracks("pl1", limit=50)
@@ -1416,8 +1418,9 @@ class TestGetPlaylistTracks:
         assert mock_spotify_api._get.call_count == 2
         first, second = mock_spotify_api._get.call_args_list
         assert first.args == ("playlists/pl1/items",)
-        assert first.kwargs == {"limit": 100, "offset": 0}
-        assert second.kwargs == {"limit": 50, "offset": 100}
+        episodes = {"additional_types": "track,episode"}
+        assert first.kwargs == {"limit": 100, "offset": 0, **episodes}
+        assert second.kwargs == {"limit": 50, "offset": 100, **episodes}
 
     async def test_stops_when_batch_shorter_than_requested(
         self, mock_spotify_api, sample_track_data
@@ -1872,7 +1875,14 @@ class TestEntityLibraryWriteTools:
             tool([f"id{i}" for i in range(cap + 1)])
         getattr(mock_spotify_api, sender).assert_not_called()
 
-    @pytest.mark.parametrize(("tool", "sender", "kind", "cap"), ENTITY_WRITES)
+    @pytest.mark.parametrize(
+        ("tool", "sender", "kind", "cap"),
+        [
+            *ENTITY_WRITES,
+            (save_tracks, "_put", "track", 50),
+            (remove_saved_tracks, "_delete", "track", 50),
+        ],
+    )
     def test_an_empty_list_is_rejected(self, mock_spotify_api, tool, sender, kind, cap):
         with pytest.raises(ValueError, match="At least one"):
             tool([])

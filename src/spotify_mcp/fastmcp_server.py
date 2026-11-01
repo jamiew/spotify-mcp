@@ -78,8 +78,9 @@ not just the SDK. Spotify's AI-input policy applies even without model training.
 New playlists are private unless public=true is explicitly requested. If Spotify
 reports unexpected visibility, confirm it in the Spotify app.
 Library writes accept 50 items (albums 20); membership checks (check_saved_*,
-check_following_artists) accept 50 items or 20 albums. Requests use chunks of at most 40. Earlier writes may
-apply on failure. get_followed_artists pages by its `after` cursor, not offset.
+check_following_artists) accept 50 items or 20 albums. Requests use chunks of at most
+40. Earlier writes may apply on failure. get_followed_artists pages by its `after`
+cursor, not offset.
 """
 
 # Shared Spotify glyph (inline data URI) attached to the server, tools, resources
@@ -1230,18 +1231,10 @@ def get_artist(artist_ids: str | list[str]) -> ArtistInfo:
 
     try:
         logger.info(f"🎤 Getting {len(ids)} artist(s)")
-        results = spotify_api.get_artists(spotify_client, ids)
-
-        artists = [
-            Artist(
-                name=result["name"],
-                id=result["id"],
-                genres=result.get("genres", []),
-                popularity=result.get("popularity"),
-                followers=(result.get("followers") or {}).get("total"),
-            )
-            for result in results
-        ]
+        results = cast(
+            "list[ArtistObject]", spotify_api.get_artists(spotify_client, ids)
+        )
+        artists = [parse_artist(result) for result in results]
 
         tracks: list[Track] = []
         if len(ids) == 1 and artists:
@@ -1714,25 +1707,7 @@ def get_album(album_ids: str | list[str]) -> AlbumInfo:
         logger.info(f"💿 Getting {len(ids)} album(s)")
         results = cast("list[AlbumObject]", spotify_api.get_albums(spotify_client, ids))
 
-        albums = []
-        for result in results:
-            result_artists = result.get("artists", [])
-            albums.append(
-                Album(
-                    name=result["name"],
-                    id=result["id"],
-                    artist=result_artists[0]["name"] if result_artists else "Unknown",
-                    artists=[a["name"] for a in result_artists],
-                    release_date=result.get("release_date"),
-                    release_date_precision=result.get("release_date_precision"),
-                    total_tracks=result.get("total_tracks"),
-                    album_type=result.get("album_type"),
-                    label=result.get("label"),
-                    genres=result.get("genres", []),
-                    popularity=result.get("popularity"),
-                    external_urls=cast("dict[str, str]", result.get("external_urls")),
-                )
-            )
+        albums = [parse_album(result) for result in results]
 
         # Album track items carry no album of their own, so stamp the parent on.
         tracks = []
@@ -1801,6 +1776,24 @@ def get_saved_tracks(limit: int = 20, offset: int = 0) -> SavedTracks:
         raise convert_spotify_error(e) from e
 
 
+def _library_write(
+    kind: str, ids: list[str], write: Callable[[list[str]], None], done: str
+) -> ActionResult:
+    """Validate a library write against the kind's public cap, run it, report it.
+
+    Upstream requests are chunked at 40 regardless of the cap.
+    """
+    limit = spotify_api.BATCH_LIMITS[kind]
+    if not ids:
+        raise ValueError(f"At least one {kind} ID is required")
+    if len(ids) > limit:
+        raise ValueError(f"Maximum {limit} {kind} IDs per request, got {len(ids)}")
+
+    logger.info(f"📚 {done} {len(ids)} {kind}(s)")
+    write(ids)
+    return ActionResult(status="success", message=f"{done} {len(ids)} {kind}(s)")
+
+
 @mcp.tool(
     title="Like Tracks",
     annotations=ToolAnnotations(
@@ -1819,13 +1812,11 @@ def save_tracks(track_ids: list[str]) -> ActionResult:
         track_ids: Track IDs or URIs (up to 50)
     """
     try:
-        if len(track_ids) > 50:
-            raise ValueError("Maximum 50 track IDs per request (Spotify API limit)")
-
-        logger.info(f"❤️ Saving {len(track_ids)} track(s)")
-        spotify_api.save_tracks(spotify_client, track_ids)
-        return ActionResult(
-            status="success", message=f"Saved {len(track_ids)} track(s)"
+        return _library_write(
+            "track",
+            track_ids,
+            lambda ids: spotify_api.save_tracks(spotify_client, ids),
+            "Saved",
         )
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
@@ -1849,13 +1840,11 @@ def remove_saved_tracks(track_ids: list[str]) -> ActionResult:
         track_ids: Track IDs or URIs (up to 50)
     """
     try:
-        if len(track_ids) > 50:
-            raise ValueError("Maximum 50 track IDs per request (Spotify API limit)")
-
-        logger.info(f"💔 Removing {len(track_ids)} saved track(s)")
-        spotify_api.remove_saved_tracks(spotify_client, track_ids)
-        return ActionResult(
-            status="success", message=f"Removed {len(track_ids)} saved track(s)"
+        return _library_write(
+            "track",
+            track_ids,
+            lambda ids: spotify_api.remove_saved_tracks(spotify_client, ids),
+            "Removed",
         )
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
@@ -1965,33 +1954,6 @@ def check_following_artists(artist_ids: list[str]) -> MembershipStatus:
         )
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
-
-
-# Public per-call caps for library writes. Albums keep the 20 that album checks
-# and reads use; everything else follows the 50 of tracks. Requests upstream are
-# chunked at 40 either way.
-LIBRARY_WRITE_LIMITS: dict[str, int] = {
-    "album": 20,
-    "artist": 50,
-    "show": 50,
-    "episode": 50,
-    "audiobook": 50,
-}
-
-
-def _library_write(
-    kind: str, ids: list[str], write: Callable[[list[str]], None], done: str
-) -> ActionResult:
-    """Validate a library write, run it and describe the result."""
-    limit = LIBRARY_WRITE_LIMITS[kind]
-    if not ids:
-        raise ValueError(f"At least one {kind} ID is required")
-    if len(ids) > limit:
-        raise ValueError(f"Maximum {limit} {kind} IDs per request, got {len(ids)}")
-
-    logger.info(f"📚 {done} {len(ids)} {kind}(s)")
-    write(ids)
-    return ActionResult(status="success", message=f"{done} {len(ids)} {kind}(s)")
 
 
 @mcp.tool(
@@ -2769,17 +2731,7 @@ def get_top_items(
         )
         return TopItems(
             time_range=time_range,
-            artists=[
-                Artist(
-                    name=a["name"],
-                    id=a["id"],
-                    genres=a.get("genres", []),
-                    popularity=a.get("popularity"),
-                    followers=(a.get("followers") or {}).get("total"),
-                )
-                for a in (result or {}).get("items", [])
-                if a
-            ],
+            artists=[parse_artist(a) for a in (result or {}).get("items", []) if a],
         )
     except SpotifyException as e:
         raise convert_spotify_error(e) from e
@@ -2870,15 +2822,7 @@ def playlist_resource(playlist_id: str) -> str:
 def artist_resource(artist_id: str) -> str:
     """An artist by ID."""
     try:
-        result = spotify_client.artist(artist_id)
-        followers = result.get("followers") or {}
-        return Artist(
-            name=result["name"],
-            id=result["id"],
-            genres=result.get("genres", []),
-            popularity=result.get("popularity"),
-            followers=followers.get("total"),
-        ).model_dump_json()
+        return parse_artist(spotify_client.artist(artist_id)).model_dump_json()
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -2887,22 +2831,7 @@ def artist_resource(artist_id: str) -> str:
 def album_resource(album_id: str) -> str:
     """An album's metadata by ID (no tracks)."""
     try:
-        result = spotify_client.album(album_id)
-        artists = result.get("artists", [])
-        return Album(
-            name=result["name"],
-            id=result["id"],
-            artist=artists[0]["name"] if artists else "Unknown",
-            artists=[a["name"] for a in artists],
-            release_date=result.get("release_date"),
-            release_date_precision=result.get("release_date_precision"),
-            total_tracks=result.get("total_tracks"),
-            album_type=result.get("album_type"),
-            label=result.get("label"),
-            genres=result.get("genres", []),
-            popularity=result.get("popularity"),
-            external_urls=cast("dict[str, str]", result.get("external_urls")),
-        ).model_dump_json()
+        return parse_album(spotify_client.album(album_id)).model_dump_json()
     except Exception as e:
         return json.dumps({"error": str(e)})
 

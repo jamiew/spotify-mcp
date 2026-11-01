@@ -781,6 +781,26 @@ class TestLibraryHTTP:
             ("PUT", "playlists/pl1/followers", {}),
         ]
 
+    def test_playlist_reads_ask_for_episodes_on_both_regimes(self):
+        calls = []
+
+        def respond(method, url, **kwargs):
+            calls.append((url.rsplit("/v1/", 1)[-1], dict(kwargs["params"])))
+            if url.endswith("/items"):
+                return self._response(
+                    method, url, kwargs, {"error": {"message": "Not found"}}, 404
+                )
+            return self._response(method, url, kwargs, {"items": [], "total": 0})
+
+        sp, _ = self._client(respond)
+        spotify_api.playlist_items(sp, "spotify:playlist:pl1", limit=5, offset=10)
+
+        query = {"limit": 5, "offset": 10, "additional_types": "track,episode"}
+        assert calls == [
+            ("playlists/pl1/items", query),
+            ("playlists/pl1/tracks", query),
+        ]
+
     @pytest.mark.parametrize(
         ("kind", "operation", "count"),
         [

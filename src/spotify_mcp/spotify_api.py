@@ -249,12 +249,18 @@ def get_albums(sp: spotipy.Spotify, album_ids: list[str]) -> list[dict]:
 def playlist_items(
     sp: spotipy.Spotify, playlist_id: str, *, limit: int, offset: int
 ) -> dict:
-    """Read a page of playlist entries. Restricted serves /items, legacy /tracks."""
+    """Read a page of playlist entries. Restricted serves /items, legacy /tracks.
+
+    Both routes return podcast episodes in playlists only when additional_types
+    asks for them. spotipy's `playlist_tracks` asks for tracks alone, and its
+    `playlist_items` targets /items, so the legacy path is spelled out here.
+    """
     pid = to_id(playlist_id)
+    params = {"limit": limit, "offset": offset, "additional_types": "track,episode"}
     return with_fallback(
         "playlist-items",
-        lambda: sp._get(f"playlists/{pid}/items", limit=limit, offset=offset),
-        lambda: sp.playlist_tracks(pid, limit=limit, offset=offset),
+        lambda: sp._get(f"playlists/{pid}/items", **params),
+        lambda: sp._get(f"playlists/{pid}/tracks", **params),
     )
 
 
