@@ -1,29 +1,20 @@
 # Multi-stage build for Spotify MCP server
 FROM python:3.12-alpine AS builder
 
-# Install build dependencies
-RUN apk add --no-cache build-base
-
 # Install uv
 RUN pip install --no-cache-dir uv
 
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files first for better caching
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src/ ./src/
-COPY README.md ./
 
-# Sync dependencies and build
-RUN uv sync --frozen --no-dev
-RUN uv build
+# Build the wheel
+RUN uv build --wheel
 
 # Production stage
 FROM python:3.12-alpine AS runtime
-
-# Install uv for runtime
-RUN pip install --no-cache-dir uv
 
 # Copy the built wheel and install it
 COPY --from=builder /app/dist/*.whl /tmp/

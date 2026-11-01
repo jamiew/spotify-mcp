@@ -42,6 +42,12 @@
 - Checked live: artist, album and episode writes and checks on a restricted app; library
   and playlist reads on the maintainer's app. Not yet live-checked: `follow_playlist`, show
   and audiobook writes, and playing, queueing or adding an episode.
+- The publish workflow fails a release whose tag does not match the package version, and
+  a manual rerun skips an already uploaded PyPI version so it can retry the MCP Registry
+  step. Before, a manual run wrote the branch ref into `server.json` as the version.
+- The Docker image no longer installs uv or syncs a dev environment it never used, and CI
+  now checks that the server module imports inside the image.
+- Dependency patch updates, including pydantic 2.14.2 and starlette 1.10.0.
 
 ## 2026-09-20 — 0.7.0
 - Request `user-follow-read` and prefer artist URIs on `/me/library/contains`, with the
