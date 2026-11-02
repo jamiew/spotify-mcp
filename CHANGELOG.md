@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+- `save_audiobooks`, `remove_saved_audiobooks` and `check_saved_audiobooks` failed every
+  time: `/me/library` answers 500/502 for `spotify:audiobook:` URIs. It takes the same id
+  as `spotify:show:`, which is what these tools now send (checked live).
+- Repeated Spotify 5xx errors are reported as an outage again, not as rate limiting.
+- `search_music` refuses `qtype` values other than track, album, artist and playlist
+  instead of returning podcast or audiobook results as broken tracks.
+
 ## 2026-11-01 — 0.8.0
 - Thanks to [@mindrunner](https://github.com/mindrunner) for the album, artist, podcast and
   audiobook library tools ([#27](https://github.com/jamiew/spotify-mcp/pull/27)), and to

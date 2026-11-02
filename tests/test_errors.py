@@ -185,6 +185,18 @@ class TestSpotifyMCPError:
         assert "playlist" in error.message.lower()
         assert error.details["http_status"] == 404
 
+    def test_exhausted_server_error_retries_are_an_outage_not_a_rate_limit(self):
+        # The exact exception spotipy raises after urllib3 gives up on 5xx retries.
+        exc = SpotifyException(
+            429,
+            -1,
+            "/v1/me/library/contains?uris=x:\n Max Retries",
+            reason="too many 500 error responses",
+        )
+        error = SpotifyMCPError.from_spotify_exception(exc)
+
+        assert error.code == SpotifyMCPErrorCode.API_UNAVAILABLE
+
 
 class TestSpotifyReasonIsPreserved:
     """Dropping Spotify's machine-readable `reason` is what makes upstream

@@ -1011,6 +1011,12 @@ def search_music(
     Note: Filters use Spotify's search syntax. For large result sets, use offset to paginate.
     Example: query='love', year='2024', genre='pop' searches for 'love year:2024 genre:pop'
     """
+    # Other types (show, episode, audiobook) come back in shapes this tool's
+    # Track items can't describe, so refuse them instead of returning junk.
+    if qtype not in ("track", "album", "artist", "playlist"):
+        raise ValueError(
+            f"qtype must be 'track', 'album', 'artist' or 'playlist', got {qtype!r}"
+        )
     try:
         limit = max(1, min(spotify_api.SEARCH_LIMIT_MAX, limit))
 

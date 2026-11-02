@@ -459,6 +459,14 @@ class TestListDevices:
 
 
 class TestSearchTracks:
+    @pytest.mark.parametrize("qtype", ["audiobook", "show", "episode"])
+    def test_unsupported_types_are_refused_before_any_request(
+        self, mock_spotify_api, qtype
+    ):
+        with pytest.raises(ValueError, match="qtype"):
+            search_music("Project Hail Mary", qtype=qtype)
+        mock_spotify_api.search.assert_not_called()
+
     def test_basic_track_search(self, mock_spotify_api, sample_search_results):
         mock_spotify_api.search.return_value = sample_search_results
 
@@ -1839,6 +1847,11 @@ class TestGetFollowedArtists:
             get_followed_artists()
 
 
+def library_uri(kind: str, item_id: str) -> str:
+    """The URI /me/library expects: it 500s on audiobook URIs, takes them as shows."""
+    return f"spotify:{'show' if kind == 'audiobook' else kind}:{item_id}"
+
+
 # (tool, sender attribute, uri kind, per-call cap)
 ENTITY_WRITES = [
     (save_albums, "_put", "album", 20),
@@ -1864,7 +1877,7 @@ class TestEntityLibraryWriteTools:
         assert result.status == "success"
         assert result.message.endswith(f"2 {kind}(s)")
         getattr(mock_spotify_api, sender).assert_called_once_with(
-            "me/library", uris=f"spotify:{kind}:a1,spotify:{kind}:a2"
+            "me/library", uris=f"{library_uri(kind, 'a1')},{library_uri(kind, 'a2')}"
         )
 
     @pytest.mark.parametrize(("tool", "sender", "kind", "cap"), ENTITY_WRITES)
@@ -2206,7 +2219,8 @@ class TestCheckSavedEpisodesAndAudiobooks:
         assert result.results == {"x1": True, "x2": False}
         assert result.checked == 2
         mock_spotify_api._get.assert_called_once_with(
-            "me/library/contains", uris=f"spotify:{kind}:x1,spotify:{kind}:x2"
+            "me/library/contains",
+            uris=f"{library_uri(kind, 'x1')},{library_uri(kind, 'x2')}",
         )
 
     @pytest.mark.parametrize(
