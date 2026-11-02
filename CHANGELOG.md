@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026-11-01 — 0.8.1
 - `save_audiobooks`, `remove_saved_audiobooks` and `check_saved_audiobooks` failed every
   time: `/me/library` answers 500/502 for `spotify:audiobook:` URIs. It takes the same id
   as `spotify:show:`, which is what these tools now send (checked live).
