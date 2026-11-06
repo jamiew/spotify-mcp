@@ -9,11 +9,24 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from mcp.server.mcpserver import (
+    AcceptedElicitation,
+    CancelledElicitation,
+    DeclinedElicitation,
+    Elicit,
+)
+from mcp.types import (
+    ClientCapabilities,
+    ElicitationCapability,
+    FormElicitationCapability,
+    UrlElicitationCapability,
+)
 from spotipy import SpotifyException
 
 from spotify_mcp.fastmcp_server import (
     PlaybackState,
     Playlist,
+    RemovalConfirmation,
     Track,
     add_to_queue,
     add_tracks_to_playlist,
@@ -26,6 +39,7 @@ from spotify_mcp.fastmcp_server import (
     check_saved_episodes,
     check_saved_shows,
     check_saved_tracks,
+    confirm_removal,
     control_playback,
     create_mood_playlist,
     create_playlist,
@@ -1029,12 +1043,15 @@ class TestAddTracksToPlaylist:
             add_tracks_to_playlist("pl1", ["rawid"])
 
 
+CONFIRMED = AcceptedElicitation(data=RemovalConfirmation(confirm=True))
+
+
 class TestRemoveTracksFromPlaylist:
     async def test_keeps_episode_uris(self, mock_spotify_api):
         mock_spotify_api._delete.return_value = {"snapshot_id": "s2"}
 
         await remove_tracks_from_playlist(
-            "pl1", ["https://open.spotify.com/episode/ep1", "t1"]
+            "pl1", ["https://open.spotify.com/episode/ep1", "t1"], CONFIRMED
         )
 
         mock_spotify_api._delete.assert_called_once_with(
@@ -1052,7 +1069,7 @@ class TestRemoveTracksFromPlaylist:
             {"snapshot_id": "s2"},
         ]
 
-        await remove_tracks_from_playlist("pl1", ["spotify:episode:ep1"])
+        await remove_tracks_from_playlist("pl1", ["spotify:episode:ep1"], CONFIRMED)
 
         assert mock_spotify_api._delete.call_args_list[-1].args == (
             "playlists/pl1/tracks",
@@ -1064,7 +1081,7 @@ class TestRemoveTracksFromPlaylist:
     async def test_converts_ids_and_uris(self, mock_spotify_api):
         mock_spotify_api._delete.return_value = {"snapshot_id": "s2"}
 
-        result = await remove_tracks_from_playlist("pl1", ["rawid"])
+        result = await remove_tracks_from_playlist("pl1", ["rawid"], CONFIRMED)
 
         assert result.status == "success"
         assert result.snapshot_id == "s2"
@@ -1077,66 +1094,72 @@ class TestRemoveTracksFromPlaylist:
         mock_spotify_api._delete.side_effect = SPOTIFY_ERROR
 
         with pytest.raises(ValueError):
-            await remove_tracks_from_playlist("pl1", ["rawid"])
+            await remove_tracks_from_playlist("pl1", ["rawid"], CONFIRMED)
 
-    async def test_elicit_accept_proceeds(self, mock_spotify_api, mock_context):
-        mock_spotify_api._delete.return_value = {"snapshot_id": "s2"}
-        mock_spotify_api.playlist_remove_all_occurrences_of_items.return_value = {
-            "snapshot_id": "s2"
-        }
-        mock_context.elicit.return_value = SimpleNamespace(
-            action="accept", data=SimpleNamespace(confirm=True)
-        )
-
-        result = await remove_tracks_from_playlist("pl1", ["rawid"], ctx=mock_context)
-
-        assert result.status == "success"
-        mock_context.elicit.assert_awaited_once()
-        mock_spotify_api._delete.assert_called_once()
-
-    async def test_elicit_decline_cancels(self, mock_spotify_api, mock_context):
-        mock_context.elicit.return_value = SimpleNamespace(action="decline", data=None)
-
-        result = await remove_tracks_from_playlist("pl1", ["rawid"], ctx=mock_context)
-
-        assert result.status == "cancelled"
-        mock_spotify_api._delete.assert_not_called()
-
-    async def test_elicit_unsupported_proceeds(self, mock_spotify_api, mock_context):
-        mock_spotify_api._delete.return_value = {"snapshot_id": "s2"}
-        # Client doesn't advertise elicitation: skip the prompt and proceed.
-        mock_context.session.check_client_capability.return_value = False
-        mock_spotify_api.playlist_remove_all_occurrences_of_items.return_value = {
-            "snapshot_id": "s2"
-        }
-
-        result = await remove_tracks_from_playlist("pl1", ["rawid"], ctx=mock_context)
-
-        assert result.status == "success"
-        mock_context.elicit.assert_not_awaited()
-        mock_spotify_api._delete.assert_called_once()
-
-    async def test_elicit_error_does_not_delete(self, mock_spotify_api, mock_context):
-        # Client supports elicitation but the prompt fails: must NOT delete.
-        mock_context.elicit.side_effect = RuntimeError("transport failure")
-
-        with pytest.raises(RuntimeError):
-            await remove_tracks_from_playlist("pl1", ["rawid"], ctx=mock_context)
-
-        mock_spotify_api._delete.assert_not_called()
-
-    async def test_elicit_accept_without_confirm_cancels(
-        self, mock_spotify_api, mock_context
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            AcceptedElicitation(data=RemovalConfirmation(confirm=False)),
+            DeclinedElicitation(),
+            CancelledElicitation(),
+        ],
+        ids=["accepted-unticked", "declined", "cancelled"],
+    )
+    async def test_anything_but_a_ticked_confirmation_keeps_the_tracks(
+        self, mock_spotify_api, answer
     ):
-        # accepting the form but leaving confirm unchecked must NOT delete
-        mock_context.elicit.return_value = SimpleNamespace(
-            action="accept", data=SimpleNamespace(confirm=False)
-        )
-
-        result = await remove_tracks_from_playlist("pl1", ["rawid"], ctx=mock_context)
+        result = await remove_tracks_from_playlist("pl1", ["rawid"], answer)
 
         assert result.status == "cancelled"
         mock_spotify_api._delete.assert_not_called()
+
+
+def _ctx_with(capabilities: ClientCapabilities | None) -> SimpleNamespace:
+    return SimpleNamespace(client_capabilities=capabilities)
+
+
+class TestConfirmRemoval:
+    @pytest.mark.parametrize(
+        "elicitation",
+        [
+            # A bare `elicitation: {}` predates modes and means form support.
+            ElicitationCapability(),
+            ElicitationCapability(form=FormElicitationCapability()),
+        ],
+        ids=["bare", "form"],
+    )
+    async def test_asks_clients_that_can_render_a_form(self, elicitation):
+        question = await confirm_removal(
+            "pl1",
+            ["t1", "spotify:episode:ep1"],
+            _ctx_with(ClientCapabilities(elicitation=elicitation)),
+        )
+
+        assert isinstance(question, Elicit)
+        assert "Remove 2 track(s) from playlist pl1" in question.message
+
+    @pytest.mark.parametrize(
+        "capabilities",
+        [
+            None,
+            ClientCapabilities(),
+            # url-only clients can't render the confirmation form.
+            ClientCapabilities(
+                elicitation=ElicitationCapability(url=UrlElicitationCapability())
+            ),
+        ],
+        ids=["none-declared", "no-elicitation", "url-only"],
+    )
+    async def test_proceeds_without_asking_when_the_client_cannot(self, capabilities):
+        answer = await confirm_removal("pl1", ["t1"], _ctx_with(capabilities))
+
+        assert answer == RemovalConfirmation(confirm=True)
+
+    async def test_rejects_malformed_uris_before_asking(self):
+        ctx = _ctx_with(ClientCapabilities(elicitation=ElicitationCapability()))
+
+        with pytest.raises(ValueError):
+            await confirm_removal("pl1", ["spotify:artist:a1"], ctx)
 
 
 class TestUpdatePlaylistDetails:
@@ -1388,20 +1411,6 @@ class TestGetPlaylistTracks:
 
         with pytest.raises(ValueError):
             await get_playlist_tracks("pl1", limit=50)
-
-    async def test_reports_progress_with_context(
-        self, mock_spotify_api, mock_context, sample_track_data
-    ):
-        mock_spotify_api._get.return_value = {
-            "items": [{"track": sample_track_data}],
-            "total": 1,
-            "next": None,
-        }
-        mock_spotify_api.playlist.return_value = {"tracks": {"total": 1}}
-
-        await get_playlist_tracks("pl1", limit=50, ctx=mock_context)
-
-        mock_context.report_progress.assert_awaited_with(progress=1, total=1)
 
     async def test_paginates_across_multiple_batches(
         self, mock_spotify_api, sample_track_data

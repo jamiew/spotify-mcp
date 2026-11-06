@@ -1,8 +1,8 @@
 """
-FastMCP test configuration and fixtures.
+Test configuration and fixtures.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -145,21 +145,6 @@ def mock_spotify_api(mock_spotify_client):
     """Mock the spotify_api module."""
     with patch("spotify_mcp.fastmcp_server.spotify_client", mock_spotify_client):
         yield mock_spotify_client
-
-
-@pytest.fixture
-def mock_context():
-    """A mock MCP Context with async progress/log/elicit methods.
-
-    Defaults to a client that supports elicitation; tests that exercise the
-    unsupported path flip check_client_capability to return False.
-    """
-    ctx = MagicMock()
-    ctx.report_progress = AsyncMock()
-    ctx.info = AsyncMock()
-    ctx.elicit = AsyncMock()
-    ctx.session.check_client_capability = MagicMock(return_value=True)
-    return ctx
 
 
 @pytest.fixture

@@ -63,7 +63,8 @@ One-time setup (already required before the first successful run):
 
 ## Architecture
 
-FastMCP-based MCP server for Spotify Web API integration using Python/`uv`.
+MCP server for Spotify Web API integration using Python/`uv`, built on the MCP Python SDK v2
+`MCPServer` (formerly `FastMCP`; the module keeps its `fastmcp_server.py` name).
 
 The Cloudflare sibling is the canonical development direction: a shared TypeScript core
 with local stdio and hosted adapters. Python remains supported, not deprecated. The sibling's
@@ -74,12 +75,29 @@ Tool names do not imply matching arguments, limits or result shapes; see the
 [README comparison](README.md#moving-between-implementations). Preserve Python's distinctive
 behavior until a deliberate consumer migration, not a wholesale rewrite.
 
-Keep `mcp[cli]<2` and the direct Pydantic runtime dependency. CLI workflows remain supported.
+Keep `mcp[cli]>=2,<3` and the direct Pydantic runtime dependency. CLI workflows remain supported.
 Record compatibility work under Unreleased in CHANGELOG; do not bump/publish a release unless
 requested.
 
+### MCP SDK v2 rules
+- **Two protocol eras.** 2025-11-25 clients (initialize handshake, including v1 SDKs) and
+  2026-07-28 clients (no server-to-client requests) both connect. Test protocol changes on
+  both: `Client(mcp, mode="legacy")` and `mode="auto"`, as `tests/test_protocol.py` does.
+- **Ask the user through a resolver**, never `ctx.elicit()`: return `Elicit(...)` from an
+  `Annotated[..., Resolve(fn)]` parameter. `ctx.elicit()` fails on 2026-era connections.
+  A resolver's question must depend only on the tool arguments, since the call is retried.
+- **Failures the model should read must be `ToolError`s.** MCPServer replaces any other
+  exception's text with "Error executing tool <name>". Tools raise `ValueError`;
+  `log_tool_execution` re-raises it as `ModelVisibleError`. Resolvers sit outside that
+  wrapper and raise `ModelVisibleError` themselves.
+- **No `ctx.info()`/`ctx.log()`** (deprecated by SEP-2577). Use `logging`, or
+  `ctx.report_progress(..., message=...)` for what the client should see.
+- **Sync tools run on a worker thread**, so they no longer block the event loop and can
+  overlap. Async tools still run on the loop; don't call blocking spotipy work from new
+  async code without `anyio.to_thread`.
+
 ### Core Files
-- **`src/spotify_mcp/fastmcp_server.py`** - Main MCP server: tools, resources, and prompts using `@mcp.tool()`/`@mcp.resource()`/`@mcp.prompt()` decorators, with typed Pydantic output models
+- **`src/spotify_mcp/fastmcp_server.py`** - Main MCP server: tools, resources, and prompts using `@mcp.tool()`/`@mcp.resource()`/`@mcp.prompt()` decorators on an `MCPServer`, with typed Pydantic output models
 - **`src/spotify_mcp/spotify_api.py`** - OAuth client wrapper plus the Feb 2026 regime fallback; tools talk to `self.sp` directly except for the endpoints whose path differs between regimes
 - **`src/spotify_mcp/spotify_types.py`** - TypedDicts for the Spotify response shapes the server consumes
 - **`src/spotify_mcp/utils.py`** - Redirect-URI normalization, Spotify ID/URI coercion
@@ -89,7 +107,7 @@ requested.
 - **MCP Tools**: Playback control, search, queue management, playlist operations, track/artist/album info, and library tools for liked songs, albums, followed artists, podcasts and audiobooks
 - **Structured Output**: Every tool returns a typed Pydantic model (real output schema)
 - **Tool Annotations & Icons**: read-only/destructive hints, titles, and a Spotify glyph on tools/resources/prompts
-- **Progress & Elicitation**: progress notifications for large paginations; confirmation prompts before destructive playlist removals (when the client supports it)
+- **Progress & Elicitation**: progress notifications for large paginations; confirmation before destructive playlist removals via an `Elicit` resolver (when the client declares form elicitation)
 - **Pagination Support**: Handles large datasets (10k+ tracks) with `limit`/`offset` parameters
 - **OAuth Flow**: Automatic token management via spotipy
 - **Type Safety**: Full Pydantic validation and MyPy compliance

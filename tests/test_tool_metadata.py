@@ -43,7 +43,7 @@ class TestToolAnnotations:
         missing = [
             t.name
             for t in tools
-            if t.annotations is None or t.annotations.readOnlyHint is None
+            if t.annotations is None or t.annotations.read_only_hint is None
         ]
         assert missing == []
 
@@ -53,7 +53,8 @@ class TestToolAnnotations:
         missing = [
             t.name
             for t in tools
-            if not t.annotations.readOnlyHint and t.annotations.destructiveHint is None
+            if not t.annotations.read_only_hint
+            and t.annotations.destructive_hint is None
         ]
         assert missing == []
 

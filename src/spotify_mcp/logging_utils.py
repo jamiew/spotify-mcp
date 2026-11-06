@@ -9,6 +9,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from spotify_mcp.errors import ModelVisibleError
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,11 @@ def _log_failure(tool_name: str, start_time: float, e: Exception) -> None:
 
 
 def log_tool_execution[F: Callable[..., Any]](func: F) -> F:
-    """Decorator to log tool execution with timing and parameters.
+    """Decorator for every tool: log timing and parameters, and surface failures.
+
+    Tools report bad arguments and Spotify errors as ValueError. Those are
+    re-raised as `ModelVisibleError` so the model reads the reason; MCPServer
+    hides the text of anything else.
 
     Supports both sync and async tools; async tools are awaited inside the
     wrapper so timing brackets the real work rather than coroutine creation.
@@ -71,6 +77,8 @@ def log_tool_execution[F: Callable[..., Any]](func: F) -> F:
                 return result
             except Exception as e:
                 _log_failure(tool_name, start_time, e)
+                if isinstance(e, ValueError) and not isinstance(e, ModelVisibleError):
+                    raise ModelVisibleError(str(e)) from e
                 raise
 
         return async_wrapper  # type: ignore
@@ -86,6 +94,8 @@ def log_tool_execution[F: Callable[..., Any]](func: F) -> F:
             return result
         except Exception as e:
             _log_failure(tool_name, start_time, e)
+            if isinstance(e, ValueError) and not isinstance(e, ModelVisibleError):
+                raise ModelVisibleError(str(e)) from e
             raise
 
     return wrapper  # type: ignore
