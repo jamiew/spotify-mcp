@@ -4,6 +4,10 @@
 - The tool list is about a third smaller (127k to 87k JSON characters). Only the server
   carries the Spotify icon now, not every tool, resource and prompt. Tool descriptions no
   longer repeat types, defaults and return shapes that the schemas already give.
+- `get_playlist_tracks` reads at most 1000 tracks per call, so a huge playlist no longer
+  piles up in memory. Omitting `limit` used to read up to about 10,000 tracks; it now
+  stops at 1000. Results add `next_offset` (pass it back as `offset`, null at the end) and
+  `truncated` (true when the cap cut the read short).
 
 ## 2026-11-07 — 0.9.0
 - Move to MCP Python SDK v2 (`mcp[cli]>=2.3,<3`, Pydantic 2.12+). Clients on the new

@@ -22,6 +22,7 @@ from mcp.types import (
 from spotipy import SpotifyException
 
 from spotify_mcp.fastmcp_server import (
+    MAX_PLAYLIST_TRACKS_PER_CALL,
     PlaybackState,
     Playlist,
     RemovalConfirmation,
@@ -1408,6 +1409,63 @@ class TestGetPlaylistTracks:
         result = await get_playlist_tracks("pl1", limit=50)
 
         assert result.total == 1
+
+    @staticmethod
+    def _serve_playlist(mock_spotify_api, track, size):
+        def page(path, limit, offset, **_):
+            rows = [{"track": track}] * max(0, min(limit, size - offset))
+            more = offset + len(rows) < size
+            return {"items": rows, "total": size, "next": "next" if more else None}
+
+        mock_spotify_api._get.side_effect = page
+        mock_spotify_api.playlist.return_value = {"tracks": {"total": size}}
+
+    @pytest.mark.parametrize("limit", [None, 5000])
+    async def test_a_read_stops_at_the_per_call_cap(
+        self, mock_spotify_api, sample_track_data, limit
+    ):
+        self._serve_playlist(mock_spotify_api, sample_track_data, 1500)
+
+        result = await get_playlist_tracks("pl1", limit=limit)
+
+        assert result.returned == MAX_PLAYLIST_TRACKS_PER_CALL == 1000
+        assert mock_spotify_api._get.call_count == 10
+        assert result.next_offset == 1000
+        assert result.truncated is True
+        assert result.total == 1500
+
+    async def test_continuing_from_next_offset_reaches_the_end(
+        self, mock_spotify_api, sample_track_data
+    ):
+        self._serve_playlist(mock_spotify_api, sample_track_data, 1500)
+
+        result = await get_playlist_tracks("pl1", offset=1000)
+
+        assert result.returned == 500
+        assert result.next_offset is None
+        assert result.truncated is False
+
+    async def test_a_playlist_of_exactly_the_cap_is_not_truncated(
+        self, mock_spotify_api, sample_track_data
+    ):
+        self._serve_playlist(mock_spotify_api, sample_track_data, 1000)
+
+        result = await get_playlist_tracks("pl1")
+
+        assert result.returned == 1000
+        assert result.next_offset is None
+        assert result.truncated is False
+
+    async def test_a_partial_page_points_at_the_next_one(
+        self, mock_spotify_api, sample_track_data
+    ):
+        self._serve_playlist(mock_spotify_api, sample_track_data, 200)
+
+        result = await get_playlist_tracks("pl1", limit=50, offset=10)
+
+        assert result.returned == 50
+        assert result.next_offset == 60
+        assert result.truncated is False
 
 
 class TestGetSavedTracks:

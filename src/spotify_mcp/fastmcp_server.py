@@ -232,13 +232,17 @@ class PlaylistList(BaseModel):
 
 
 class PlaylistTracks(BaseModel):
-    """Paginated tracks from a single playlist."""
+    """One bounded read of a playlist's tracks."""
 
     items: list[Track]
     total: int
     limit: int | None = None
     offset: int
     returned: int
+    # Pass back as `offset` to keep reading; None once the playlist is exhausted.
+    next_offset: int | None = None
+    # True when the call stopped at MAX_PLAYLIST_TRACKS_PER_CALL short of `limit`.
+    truncated: bool = False
 
 
 class SavedTracks(BaseModel):
@@ -564,39 +568,42 @@ def placeholder_track(row: dict[str, object]) -> Track:
     )
 
 
+# Hard ceiling on the rows one get_playlist_tracks call holds in memory and returns.
+MAX_PLAYLIST_TRACKS_PER_CALL = 1000
+
+
 async def get_playlist_tracks_paginated(
     playlist_id: str,
-    limit: int | None = None,
+    limit: int,
     offset: int = 0,
     ctx: Context | None = None,
     total: int | None = None,
-) -> list[Track]:
-    """Read playlist rows from `offset`, up to `limit` (None for all), 100 per request.
+) -> tuple[list[Track], int | None]:
+    """Read up to `limit` playlist rows from `offset`, 100 per request.
 
-    Spotify calls run on a worker thread so the event loop stays free between
-    progress notifications. `total` is only the progress denominator.
+    Returns the tracks and the offset to continue from, or None at the end of
+    the playlist. Spotify calls run on a worker thread so the event loop stays
+    free between progress notifications. `total` is only the progress denominator.
     """
     tracks: list[Track] = []
     current_offset = offset
-    remaining = limit  # None means "every track"
+    remaining = limit
     unavailable = 0
+    more = True
 
-    while True:
+    while remaining > 0:
         # Spotify API max is 100 per request
-        batch_limit = 100 if remaining is None else min(100, remaining)
-        if batch_limit <= 0:
-            break
-
         tracks_result = await asyncio.to_thread(
             spotify_api.playlist_items,
             spotify_client,
             playlist_id,
-            limit=batch_limit,
+            limit=min(100, remaining),
             offset=current_offset,
         )
 
         rows = (tracks_result or {}).get("items") or []
         if not rows:
+            more = False
             break
 
         for row in rows:
@@ -617,19 +624,12 @@ async def get_playlist_tracks_paginated(
         # tracks lets an unparseable page hold `remaining` at its starting value
         # and page through the entire playlist regardless of `limit`.
         current_offset += len(rows)
-        if remaining is not None:
-            remaining -= len(rows)
-            if remaining <= 0:
-                break
+        remaining -= len(rows)
 
         # A page can come back shorter than asked for without being the last one;
         # only a missing `next` means the end.
         if not tracks_result.get("next"):
-            break
-
-        # Safety check to prevent infinite loops
-        if current_offset > 10000:
-            logger.warning("Stopped reading playlist at offset %d", current_offset)
+            more = False
             break
 
     if unavailable:
@@ -638,7 +638,7 @@ async def get_playlist_tracks_paginated(
             unavailable,
         )
 
-    return tracks
+    return tracks, current_offset if more else None
 
 
 def _check_batch(kind: str, ids: list[str]) -> None:
@@ -1290,20 +1290,14 @@ async def get_playlist_tracks(
     offset: int = 0,
     ctx: Context | None = None,
 ) -> PlaylistTracks:
-    """Get tracks from a playlist with full pagination support.
+    """Get a range of a playlist's tracks, up to 1000 per call.
 
     Args:
-        playlist_id: Playlist ID
-        limit: Max tracks to return (None for all tracks, up to 10,000 safety limit)
-        offset: Number of tracks to skip for pagination (default 0)
+        limit: Max tracks to return; omit for as many as one call allows (1000)
+        offset: Zero-based position to start from
 
-    Returns:
-        PlaylistTracks with 'items' (list of tracks), 'total', 'limit', 'offset'
-
-    Note: Large playlists require pagination. Use limit/offset to get specific ranges:
-    - Get first 100: limit=100, offset=0
-    - Get next 100: limit=100, offset=100
-    - Get all tracks: limit=None (use with caution on very large playlists)
+    Keep reading by passing the returned `next_offset` as `offset` until it is
+    null. `truncated` is true when the 1000-track cap cut the read short.
     """
     # Metadata first: it survives a restricted regime that forbids contents,
     # and _total_tracks falls back to the items cursor when it is stripped.
@@ -1315,8 +1309,15 @@ async def get_playlist_tracks(
         _total_tracks, playlist_id, (playlist_info.get("tracks") or {}).get("total")
     )
 
-    tracks = await get_playlist_tracks_paginated(
-        playlist_id, limit, offset, ctx=ctx, total=total_tracks
+    cap = MAX_PLAYLIST_TRACKS_PER_CALL
+    if limit is not None:
+        cap = min(limit, cap)
+    tracks, next_offset = await get_playlist_tracks_paginated(
+        playlist_id,
+        cap,
+        offset,
+        ctx=ctx,
+        total=None if total_tracks is None else min(cap, max(0, total_tracks - offset)),
     )
     return PlaylistTracks(
         items=tracks,
@@ -1324,6 +1325,8 @@ async def get_playlist_tracks(
         limit=limit,
         offset=offset,
         returned=len(tracks),
+        next_offset=next_offset,
+        truncated=next_offset is not None and (limit is None or limit > cap),
     )
 
 

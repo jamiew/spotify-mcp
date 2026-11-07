@@ -89,7 +89,7 @@ and playback control attempts best-effort read-after-write confirmation, not gua
 | `add_to_queue` | Queue a track or podcast episode |
 | `list_playlists` | List your playlists with pagination |
 | `get_playlist` | Read playlist metadata without tracks |
-| `get_playlist_tracks` | Read playlist tracks with pagination |
+| `get_playlist_tracks` | Read up to 1000 playlist tracks per call; continue from `next_offset` |
 | `create_playlist` | Create a private playlist; set `public=true` to publish |
 | `update_playlist_details` | Change name, description, or visibility |
 | `add_tracks_to_playlist` | Add up to 100 tracks or episodes |

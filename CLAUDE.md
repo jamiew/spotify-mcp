@@ -112,7 +112,7 @@ requested.
 - **Structured Output**: Every tool returns a typed Pydantic model (real output schema)
 - **Tool Annotations**: read-only/destructive hints and titles on every tool; the Spotify glyph ships once, on the server
 - **Progress & Elicitation**: progress notifications for large paginations; confirmation before destructive playlist removals via an `Elicit` resolver (when the client declares form elicitation)
-- **Pagination Support**: Handles large datasets (10k+ tracks) with `limit`/`offset` parameters
+- **Pagination Support**: `limit`/`offset` on list tools; `get_playlist_tracks` reads at most 1000 tracks per call and returns `next_offset` and `truncated`
 - **OAuth Flow**: Automatic token management via spotipy
 - **Type Safety**: Full Pydantic validation and MyPy compliance
 - **Logging**: One completion line per tool call, with timing, on stderr; the SDK logs failures
