@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026-11-07 — 0.9.0
 - Move to MCP Python SDK v2 (`mcp[cli]>=2.3,<3`, Pydantic 2.12+). Clients on the new
   2026-07-28 protocol now connect, alongside 2025-era and v1-SDK clients.
 - `remove_tracks_from_playlist` asks for confirmation through an SDK resolver, so it works on
@@ -9,7 +9,6 @@
 - Tool errors keep their message: v2 hides the text of unexpected exceptions, which would have
   dropped Spotify's reason. Bad arguments and Spotify errors still reach the model.
 - The server reports its own version in `serverInfo` (v2 reports an empty one by default).
-- Sync tools run on a worker thread instead of blocking the event loop.
 - Progress messages replace the deprecated `ctx.info()` log notifications while paging
   playlists.
 - Resources return `application/json`, and a Spotify failure now fails the read with an error
