@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from spotipy import SpotifyException
 from spotipy.oauth2 import SpotifyOAuth
 
+from .errors import ModelVisibleError
 from .utils import normalize_redirect_uri, to_id, to_uri
 
 if TYPE_CHECKING:
@@ -69,21 +70,51 @@ SCOPES = [
 RETRY_STATUS_CODES = (500, 502, 503, 504)
 
 
+class LazyOAuth:
+    """Builds SpotifyOAuth on the first token request, not at startup.
+
+    Clients and registries start the server and list its tools without any
+    credentials, so a missing one must fail the tool call that needs it.
+    """
+
+    def __init__(self) -> None:
+        self._oauth: SpotifyOAuth | None = None
+
+    @property
+    def oauth(self) -> SpotifyOAuth:
+        if self._oauth is None:
+            settings = {
+                "SPOTIFY_CLIENT_ID": CLIENT_ID,
+                "SPOTIFY_CLIENT_SECRET": CLIENT_SECRET,
+                "SPOTIFY_REDIRECT_URI": REDIRECT_URI,
+            }
+            missing = [name for name, value in settings.items() if not value]
+            if missing:
+                raise ModelVisibleError(
+                    f"Spotify credentials are not configured: set {', '.join(missing)}"
+                    " in the MCP server's environment, then restart it."
+                )
+            self._oauth = SpotifyOAuth(
+                scope=",".join(SCOPES),
+                client_id=CLIENT_ID,
+                client_secret=CLIENT_SECRET,
+                redirect_uri=REDIRECT_URI,
+            )
+        return self._oauth
+
+    def get_access_token(self, as_dict: bool = False) -> str:
+        return self.oauth.get_access_token(as_dict=as_dict)  # type: ignore[no-any-return]
+
+
 def create_client() -> spotipy.Spotify:
-    """Build the authenticated spotipy client.
+    """Build the spotipy client; credentials are checked on its first request.
 
     Tools in `fastmcp_server` call it directly, except for the operations whose
     path differs between the two 2026 API regimes; those go through the
     `with_fallback` helpers below.
     """
-    auth_manager = SpotifyOAuth(
-        scope=",".join(SCOPES),
-        client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET,
-        redirect_uri=REDIRECT_URI,
-    )
     return spotipy.Spotify(
-        auth_manager=auth_manager, status_forcelist=RETRY_STATUS_CODES
+        auth_manager=LazyOAuth(), status_forcelist=RETRY_STATUS_CODES
     )
 
 

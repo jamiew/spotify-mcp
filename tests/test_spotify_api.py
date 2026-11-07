@@ -8,9 +8,9 @@ import pytest
 import requests
 import spotipy
 from spotipy import SpotifyException
-from spotipy.exceptions import SpotifyOauthError
 
 import spotify_mcp.spotify_api as spotify_api
+from spotify_mcp.errors import ModelVisibleError
 from spotify_mcp.spotify_api import (
     RETRY_STATUS_CODES,
     _legacy_families,
@@ -58,15 +58,18 @@ class TestCreateClient:
     @patch("spotify_mcp.spotify_api.CLIENT_ID", None)
     @patch("spotify_mcp.spotify_api.CLIENT_SECRET", "test_client_secret")
     @patch("spotify_mcp.spotify_api.REDIRECT_URI", "test_redirect_uri")
-    def test_raises_on_missing_credentials(self):
-        with pytest.raises(SpotifyOauthError):
-            create_client()
+    def test_missing_credentials_fail_the_first_request_not_startup(self):
+        sp = create_client()
+
+        with pytest.raises(ModelVisibleError, match="SPOTIFY_CLIENT_ID") as raised:
+            sp.current_user()
+        assert "SPOTIFY_CLIENT_SECRET" not in str(raised.value)
 
     def test_authorization_requests_the_follow_scopes(self):
         # Artist membership reads need user-follow-read; /me/library writes and
         # the legacy follow routes need user-follow-modify.
         sp = create_client()
-        query = parse_qs(urlparse(sp.auth_manager.get_authorize_url()).query)
+        query = parse_qs(urlparse(sp.auth_manager.oauth.get_authorize_url()).query)
 
         scopes = query["scope"][0].split()
         assert {"user-follow-read", "user-follow-modify"} <= set(scopes)

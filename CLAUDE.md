@@ -21,7 +21,8 @@ Required environment variables:
 - `SPOTIFY_REDIRECT_URI` - OAuth redirect URI registered in the Spotify app (`http://127.0.0.1:8888`)
 
 Configuration comes from environment variables first, then a `.env` file for local
-development. Missing credentials fail at startup with spotipy's "No client_id" error.
+development. The server starts and lists tools without them; the first Spotify request
+fails with an error naming the missing variables (`LazyOAuth` in `spotify_api.py`).
 
 ### Git Workflow
 **Quality Gates**: Before any commit, ALWAYS run every check listed under Development

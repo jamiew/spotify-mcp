@@ -8,9 +8,11 @@
   piles up in memory. Omitting `limit` used to read up to about 10,000 tracks; it now
   stops at 1000. Results add `next_offset` (pass it back as `offset`, null at the end) and
   `truncated` (true when the cap cut the read short).
-- A source checkout no longer fills missing credentials with placeholder values from
-  `pyproject.toml`. Missing credentials now fail at startup with spotipy's "No client_id"
-  error instead of a confusing OAuth failure later.
+- The server starts and lists its tools without Spotify credentials, so clients and
+  registries can probe it before setup. The first tool call that needs Spotify then fails
+  with an error naming the missing `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` or
+  `SPOTIFY_REDIRECT_URI`. A source checkout no longer fills them with placeholder values
+  from `pyproject.toml`, which used to end in a confusing OAuth failure.
 
 ## 2026-11-07 — 0.9.0
 - Move to MCP Python SDK v2 (`mcp[cli]>=2.3,<3`, Pydantic 2.12+). Clients on the new

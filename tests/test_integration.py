@@ -24,23 +24,34 @@ ROOT = Path(__file__).resolve().parents[1]
 ERAS = {"legacy": "2025-11-25", "auto": "2026-07-28"}
 
 
-def _server(tmp_path: Path) -> StdioServerParameters:
+def _server(tmp_path: Path, credentials: bool = True) -> StdioServerParameters:
     config = json.loads((ROOT / ".mcp.json").read_text())
     [entry] = config["mcpServers"].values()
 
     def expand(arg: str) -> str:
         return arg.replace("${CLAUDE_PROJECT_DIR:-.}", str(ROOT))
 
-    # Minimal env: no .env is loaded (cwd is a temp dir) and no real credentials.
-    # UV_* passes through so `uv run` reuses CI's interpreter choice.
+    # Minimal env and no real credentials. UV_* passes through so `uv run` reuses
+    # CI's interpreter choice.
     env = {k: v for k, v in os.environ.items() if k.startswith("UV_")}
-    env |= {
-        "PATH": os.environ["PATH"],
-        "HOME": os.environ["HOME"],
-        "SPOTIFY_CLIENT_ID": "test_client_id",
-        "SPOTIFY_CLIENT_SECRET": "test_client_secret",
-        "SPOTIFY_REDIRECT_URI": "http://127.0.0.1:8888/callback",
-    }
+    env |= {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"]}
+    if credentials:
+        env |= {
+            "SPOTIFY_CLIENT_ID": "test_client_id",
+            "SPOTIFY_CLIENT_SECRET": "test_client_secret",
+            "SPOTIFY_REDIRECT_URI": "http://127.0.0.1:8888/callback",
+        }
+    else:
+        # dotenv searches upward from the package, which would find the repo's
+        # .env, so turn it off. A temp HOME keeps the user's config out too;
+        # uv keeps its real cache so the launch stays fast and offline.
+        env |= {
+            "HOME": str(tmp_path),
+            "PYTHON_DOTENV_DISABLED": "1",
+            "UV_CACHE_DIR": os.environ.get(
+                "UV_CACHE_DIR", str(Path.home() / ".cache" / "uv")
+            ),
+        }
     return StdioServerParameters(
         command=expand(entry["command"]),
         args=[expand(a) for a in entry["args"]],
@@ -82,6 +93,23 @@ async def test_mcp_json_serves_both_eras(tmp_path, mode):
         error = await client.call_tool("control_playback", {"action": "invalid-action"})
         assert error.is_error
         assert (await client.list_tools(cache_mode="refresh")).tools
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("mode", list(ERAS))
+async def test_starts_and_lists_tools_without_credentials(tmp_path, mode):
+    """Clients and registries probe the server before anyone configures it."""
+    server = _server(tmp_path, credentials=False)
+    async with Client(server, mode=mode, read_timeout_seconds=30) as client:
+        assert client.protocol_version == ERAS[mode]
+        assert (await client.list_tools()).tools
+
+        result = await client.call_tool("get_me", {})
+
+    assert result.is_error
+    text = result.content[0].text
+    assert "SPOTIFY_CLIENT_ID" in text
+    assert "SPOTIFY_CLIENT_SECRET" in text
 
 
 class _Decliner:
