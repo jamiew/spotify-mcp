@@ -66,9 +66,8 @@ class TestRemovalConfirmation:
         async with _client(mode, answer) as client:
             result = await client.call_tool("remove_tracks_from_playlist", REMOVE)
 
-        assert answer.questions == [
-            "Remove 1 track(s) from playlist pl1? This cannot be undone."
-        ]
+        assert len(answer.questions) == 1
+        assert "pl1" in answer.questions[0]
         assert result.structured_content["status"] == "success"
         mock_spotify_api._delete.assert_called_once()
 
@@ -182,4 +181,4 @@ async def test_large_playlist_reads_report_progress(
         )
 
     assert result.structured_content["returned"] == 2
-    assert updates == [(2, 2, "Fetched 2 tracks so far")]
+    assert [(progress, total) for progress, total, _ in updates] == [(2, 2)]

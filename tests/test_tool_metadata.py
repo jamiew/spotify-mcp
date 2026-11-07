@@ -9,6 +9,7 @@ defect, and README drift is how people end up calling tools that don't exist.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 
@@ -24,8 +25,8 @@ MAX_DESCRIPTION_CHARS = 1200
 
 
 @pytest.fixture(scope="module")
-async def tools():
-    return await mcp.list_tools()
+def tools():
+    return asyncio.run(mcp.list_tools())
 
 
 @pytest.fixture(scope="module")
@@ -36,10 +37,10 @@ def readme_tools() -> set[str]:
 
 
 class TestToolAnnotations:
-    async def test_every_tool_has_a_title(self, tools):
+    def test_every_tool_has_a_title(self, tools):
         assert [t.name for t in tools if not t.title] == []
 
-    async def test_every_tool_has_behaviour_annotations(self, tools):
+    def test_every_tool_has_behaviour_annotations(self, tools):
         missing = [
             t.name
             for t in tools
@@ -47,7 +48,7 @@ class TestToolAnnotations:
         ]
         assert missing == []
 
-    async def test_writes_declare_a_destructive_hint(self, tools):
+    def test_writes_declare_a_destructive_hint(self, tools):
         # Only read-only tools may leave destructiveHint unset; for a write, the
         # client has no way to guess.
         missing = [
@@ -58,10 +59,10 @@ class TestToolAnnotations:
         ]
         assert missing == []
 
-    async def test_every_tool_has_an_icon(self, tools):
+    def test_every_tool_has_an_icon(self, tools):
         assert [t.name for t in tools if not t.icons] == []
 
-    async def test_descriptions_stay_within_budget(self, tools):
+    def test_descriptions_stay_within_budget(self, tools):
         too_long = [
             t.name
             for t in tools
@@ -71,10 +72,10 @@ class TestToolAnnotations:
 
 
 class TestReadmeParity:
-    async def test_readme_documents_every_tool(self, tools, readme_tools):
+    def test_readme_documents_every_tool(self, tools, readme_tools):
         assert sorted({t.name for t in tools} - readme_tools) == []
 
-    async def test_readme_lists_no_tools_that_do_not_exist(self, tools, readme_tools):
+    def test_readme_lists_no_tools_that_do_not_exist(self, tools, readme_tools):
         assert sorted(readme_tools - {t.name for t in tools}) == []
 
 

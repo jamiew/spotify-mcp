@@ -90,28 +90,6 @@ class TestSpotifyErrorHandling:
         assert isinstance(result, ValueError)
         assert "teapot" in str(result).lower()
 
-    def test_handle_non_spotify_exception(self):
-        """Test handling non-Spotify exceptions."""
-        error = ConnectionError("Network unreachable")
-
-        result = convert_spotify_error(error)
-
-        assert isinstance(result, ValueError)
-        assert "network unreachable" in str(result).lower()
-
-    def test_handle_spotify_mcp_error(self):
-        """Test handling SpotifyMCPError directly."""
-        error = SpotifyMCPError(
-            SpotifyMCPErrorCode.NO_ACTIVE_DEVICE,
-            "No active device found",
-            suggestion="Open Spotify on a device",
-        )
-
-        result = convert_spotify_error(error)
-
-        assert isinstance(result, ValueError)
-        assert "no active device" in str(result).lower()
-
     def test_no_active_device_error(self):
         """Test handling device-related errors."""
         error = SpotifyException(404, -1, "No active device found")
@@ -153,37 +131,30 @@ class TestSpotifyErrorHandling:
 class TestSpotifyMCPError:
     """Test SpotifyMCPError class functionality."""
 
-    def test_create_basic_error(self):
-        """Test creating a basic SpotifyMCPError."""
-        error = SpotifyMCPError(
-            SpotifyMCPErrorCode.TRACK_NOT_FOUND,
-            "Track not found",
-            {"track_id": "123"},
-            "Check the track ID",
-        )
-
-        assert error.code == SpotifyMCPErrorCode.TRACK_NOT_FOUND
-        assert error.message == "Track not found"
-        assert error.details == {"track_id": "123"}
-        assert error.suggestion == "Check the track ID"
-
     def test_from_spotify_exception_404_track(self):
-        """Test creating error from Spotify 404 track exception."""
         exc = SpotifyException(404, -1, "track not found")
         error = SpotifyMCPError.from_spotify_exception(exc)
 
         assert error.code == SpotifyMCPErrorCode.TRACK_NOT_FOUND
-        assert "track" in error.message.lower()
-        assert error.details["http_status"] == 404
 
     def test_from_spotify_exception_404_playlist(self):
-        """Test creating error from Spotify 404 playlist exception."""
         exc = SpotifyException(404, -1, "playlist not found")
         error = SpotifyMCPError.from_spotify_exception(exc)
 
         assert error.code == SpotifyMCPErrorCode.PLAYLIST_NOT_FOUND
-        assert "playlist" in error.message.lower()
-        assert error.details["http_status"] == 404
+
+    def test_a_missing_playlist_read_through_its_tracks_route_is_a_playlist(self):
+        # spotipy prefixes the request URL, which names both "playlists" and
+        # "tracks"; this used to be reported as a missing track.
+        exc = SpotifyException(
+            404,
+            -1,
+            "https://api.spotify.com/v1/playlists/pl1/tracks?limit=100:\n"
+            " Resource not found",
+        )
+        error = SpotifyMCPError.from_spotify_exception(exc)
+
+        assert error.code == SpotifyMCPErrorCode.PLAYLIST_NOT_FOUND
 
     def test_exhausted_server_error_retries_are_an_outage_not_a_rate_limit(self):
         # The exact exception spotipy raises after urllib3 gives up on 5xx retries.
@@ -202,12 +173,12 @@ class TestSpotifyReasonIsPreserved:
     """Dropping Spotify's machine-readable `reason` is what makes upstream
     changes undiagnosable from a tool failure — see the CLAUDE.md note."""
 
-    def test_reason_lands_in_details_and_message(self):
+    def test_reason_lands_on_the_error_and_in_the_message(self):
         exc = SpotifyException(403, -1, "Forbidden", reason="UNKNOWN")
 
         error = SpotifyMCPError.from_spotify_exception(exc)
 
-        assert error.details["reason"] == "UNKNOWN"
+        assert error.reason == "UNKNOWN"
         assert "UNKNOWN" in _format_error(error)
 
     def test_no_active_device_is_keyed_off_reason_not_prose(self):

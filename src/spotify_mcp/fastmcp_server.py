@@ -1,12 +1,11 @@
-"""
-Spotify MCP server, built on the MCP Python SDK's MCPServer.
-"""
+"""Spotify MCP server, built on the MCP Python SDK's MCPServer."""
 
 from __future__ import annotations
 
 import asyncio
-import json
+import functools
 import logging
+import time
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Annotated, cast
 
@@ -18,16 +17,14 @@ from mcp.server.mcpserver import (
     MCPServer,
     Resolve,
 )
+from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError
 from mcp.types import Icon, ToolAnnotations
 from pydantic import BaseModel
 from spotipy import SpotifyException
 
 import spotify_mcp.spotify_api as spotify_api
 from spotify_mcp.errors import ModelVisibleError, convert_spotify_error
-from spotify_mcp.logging_utils import (
-    log_pagination_info,
-    log_tool_execution,
-)
+from spotify_mcp.logging_utils import log_tool_execution
 from spotify_mcp.utils import to_id, to_playable_uri
 
 if TYPE_CHECKING:
@@ -43,15 +40,7 @@ if TYPE_CHECKING:
         TrackObject,
     )
 
-# Configure logging
 logger = logging.getLogger(__name__)
-
-# Configure structured logging for better observability
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-)
 
 # Guidance that applies to the whole surface lives here rather than in every tool
 # description — it ships once per session instead of being repeated per tool.
@@ -101,9 +90,7 @@ mcp = MCPServer(
     version=version("spotify-mcp-jamiew"),
 )
 
-# Initialize Spotify client
-_client_wrapper = spotify_api.Client()
-spotify_client = _client_wrapper.sp  # Use spotipy client directly
+spotify_client = spotify_api.create_client()
 
 
 # Data models for structured output
@@ -584,25 +571,15 @@ async def get_playlist_tracks_paginated(
     ctx: Context | None = None,
     total: int | None = None,
 ) -> list[Track]:
-    """Get playlist tracks with proper pagination support.
-    Args:
-        playlist_id: Spotify playlist ID
-        limit: Maximum number of tracks to return (None for all)
-        offset: Number of tracks to skip
-        ctx: Optional MCP context for progress notifications
-        total: Total track count, used as the progress denominator
+    """Read playlist rows from `offset`, up to `limit` (None for all), 100 per request.
 
-    Returns:
-        List of Track objects
+    Spotify calls run on a worker thread so the event loop stays free between
+    progress notifications. `total` is only the progress denominator.
     """
     tracks: list[Track] = []
     current_offset = offset
     remaining = limit  # None means "every track"
     unavailable = 0
-
-    logger.info(
-        f"📄 Starting paginated fetch for playlist {playlist_id} (limit={limit}, offset={offset})"
-    )
 
     while True:
         # Spotify API max is 100 per request
@@ -610,10 +587,12 @@ async def get_playlist_tracks_paginated(
         if batch_limit <= 0:
             break
 
-        logger.info(f"📄 Fetching batch: offset={current_offset}, limit={batch_limit}")
-        # Get playlist tracks with pagination
-        tracks_result = spotify_api.playlist_items(
-            spotify_client, playlist_id, limit=batch_limit, offset=current_offset
+        tracks_result = await asyncio.to_thread(
+            spotify_api.playlist_items,
+            spotify_client,
+            playlist_id,
+            limit=batch_limit,
+            offset=current_offset,
         )
 
         rows = (tracks_result or {}).get("items") or []
@@ -627,10 +606,6 @@ async def get_playlist_tracks_paginated(
                 tracks.append(placeholder_track(row if isinstance(row, dict) else {}))
                 continue
             tracks.append(parse_track(entry))
-
-        logger.info(
-            f"📄 Batch complete: read {len(rows)} rows (total so far: {len(tracks)})"
-        )
 
         if ctx is not None:
             await ctx.report_progress(
@@ -647,27 +622,48 @@ async def get_playlist_tracks_paginated(
             if remaining <= 0:
                 break
 
-        # Check if we've reached the end
-        if len(rows) < batch_limit or not (tracks_result or {}).get("next"):
+        # A page can come back shorter than asked for without being the last one;
+        # only a missing `next` means the end.
+        if not tracks_result.get("next"):
             break
 
         # Safety check to prevent infinite loops
         if current_offset > 10000:
-            logger.warning(
-                f"⚠️ Safety limit reached: stopping at offset {current_offset}"
-            )
+            logger.warning("Stopped reading playlist at offset %d", current_offset)
             break
 
     if unavailable:
         logger.warning(
-            f"⚠️ {unavailable} playlist entries had no track object and were "
-            f"returned as placeholders"
+            "%d playlist entries had no track object; returned placeholders",
+            unavailable,
         )
-    logger.info(f"📄 Pagination complete: total {len(tracks)} tracks retrieved")
+
     return tracks
 
 
+def _check_batch(kind: str, ids: list[str]) -> None:
+    """Enforce the kind's public per-call cap; upstream requests chunk at 40."""
+    limit = spotify_api.BATCH_LIMITS[kind]
+    if not ids:
+        raise ValueError(f"At least one {kind} ID is required")
+    if len(ids) > limit:
+        raise ValueError(f"Maximum {limit} {kind} IDs per request, got {len(ids)}")
+
+
 # === TOOLS ===
+
+
+def _profile() -> UserProfile:
+    """Read the signed-in user's profile into our model."""
+    me = spotify_client.current_user() or {}
+    return UserProfile(
+        id=me["id"],
+        display_name=me.get("display_name"),
+        email=me.get("email"),
+        country=me.get("country"),
+        product=me.get("product"),
+        followers=(me.get("followers") or {}).get("total"),
+    )
 
 
 @mcp.tool(
@@ -685,19 +681,7 @@ def get_me() -> UserProfile:
         UserProfile. email/country/product are unavailable on newer Spotify apps
         and come back empty rather than erroring.
     """
-    try:
-        logger.info("👤 Getting current user profile")
-        me = spotify_client.current_user() or {}
-        return UserProfile(
-            id=me["id"],
-            display_name=me.get("display_name"),
-            email=me.get("email"),
-            country=me.get("country"),
-            product=me.get("product"),
-            followers=(me.get("followers") or {}).get("total"),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _profile()
 
 
 # Spotify's player writes are asynchronous: /me/player/play and friends answer 204
@@ -746,9 +730,7 @@ def _playback_confirmed(
     return lambda _s: True
 
 
-async def _await_playback(
-    matches: Callable[[PlaybackState], bool],
-) -> PlaybackState:
+def _await_playback(matches: Callable[[PlaybackState], bool]) -> PlaybackState:
     """Read playback state until `matches` holds, within a bounded attempt count.
 
     Return the last observation if attempts run out or a later Spotify read fails.
@@ -758,7 +740,7 @@ async def _await_playback(
     for _ in range(_CONFIRM_ATTEMPTS - 1):
         if matches(state):
             return state
-        await asyncio.sleep(_CONFIRM_DELAY_S)
+        time.sleep(_CONFIRM_DELAY_S)
         try:
             state = _playback_state()
         except SpotifyException as e:
@@ -806,11 +788,7 @@ def get_playback_state() -> PlaybackState:
     Returns:
         PlaybackState (is_playing is False when nothing is playing)
     """
-    try:
-        logger.info("🎵 Getting current playback state")
-        return _playback_state()
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _playback_state()
 
 
 @mcp.tool(
@@ -824,7 +802,7 @@ def get_playback_state() -> PlaybackState:
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-async def control_playback(
+def control_playback(
     action: str,
     track_ids: list[str] | None = None,
     context_uri: str | None = None,
@@ -853,66 +831,58 @@ async def control_playback(
     Stale state or a later read failure returns the last observation. Checks do not
     verify every requested track, context or device transition.
     """
-    try:
-        logger.info(f"🎵 Playback action '{action}' (device={device_id or 'active'})")
+    # Only the outgoing optional identity is needed; local tracks may have no
+    # catalog id and must not be validated as a Track before issuing the action.
+    previous_track_id: str | None = None
+    if action in ("next", "previous"):
+        before = spotify_client.current_playback(additional_types=PLAYABLE_TYPES)
+        previous_track_id = ((before or {}).get("item") or {}).get("id")
 
-        # Only the outgoing optional identity is needed; local tracks may have no
-        # catalog id and must not be validated as a Track before issuing the action.
-        previous_track_id: str | None = None
-        if action in ("next", "previous"):
-            before = spotify_client.current_playback(additional_types=PLAYABLE_TYPES)
-            previous_track_id = ((before or {}).get("item") or {}).get("id")
-
-        if action == "play":
-            if context_uri:
-                spotify_client.start_playback(
-                    device_id=device_id, context_uri=context_uri
-                )
-            elif track_ids:
-                spotify_client.start_playback(
-                    device_id=device_id, uris=[to_playable_uri(t) for t in track_ids]
-                )
-            else:
-                spotify_client.start_playback(device_id=device_id)
-        elif action == "pause":
-            spotify_client.pause_playback(device_id=device_id)
-        elif action == "next":
-            spotify_client.next_track(device_id=device_id)
-        elif action == "previous":
-            spotify_client.previous_track(device_id=device_id)
-        elif action == "seek":
-            if position_ms is None:
-                raise ValueError("action='seek' requires position_ms")
-            spotify_client.seek_track(position_ms, device_id=device_id)
-        elif action == "volume":
-            if volume_percent is None:
-                raise ValueError("action='volume' requires volume_percent")
-            spotify_client.volume(volume_percent, device_id=device_id)
-        elif action == "shuffle":
-            if state not in ("on", "off"):
-                raise ValueError("action='shuffle' requires state='on' or 'off'")
-            spotify_client.shuffle(state == "on", device_id=device_id)
-        elif action == "repeat":
-            if state not in ("track", "context", "off"):
-                raise ValueError(
-                    "action='repeat' requires state='track', 'context' or 'off'"
-                )
-            spotify_client.repeat(state, device_id=device_id)
-        else:
-            raise ValueError(f"Invalid action: {action}")
-
-        return await _await_playback(
-            _playback_confirmed(
-                action,
-                previous_track_id=previous_track_id,
-                position_ms=position_ms,
-                volume_percent=volume_percent,
-                state=state,
+    if action == "play":
+        if context_uri:
+            spotify_client.start_playback(device_id=device_id, context_uri=context_uri)
+        elif track_ids:
+            spotify_client.start_playback(
+                device_id=device_id, uris=[to_playable_uri(t) for t in track_ids]
             )
-        )
+        else:
+            spotify_client.start_playback(device_id=device_id)
+    elif action == "pause":
+        spotify_client.pause_playback(device_id=device_id)
+    elif action == "next":
+        spotify_client.next_track(device_id=device_id)
+    elif action == "previous":
+        spotify_client.previous_track(device_id=device_id)
+    elif action == "seek":
+        if position_ms is None:
+            raise ValueError("action='seek' requires position_ms")
+        spotify_client.seek_track(position_ms, device_id=device_id)
+    elif action == "volume":
+        if volume_percent is None:
+            raise ValueError("action='volume' requires volume_percent")
+        spotify_client.volume(volume_percent, device_id=device_id)
+    elif action == "shuffle":
+        if state not in ("on", "off"):
+            raise ValueError("action='shuffle' requires state='on' or 'off'")
+        spotify_client.shuffle(state == "on", device_id=device_id)
+    elif action == "repeat":
+        if state not in ("track", "context", "off"):
+            raise ValueError(
+                "action='repeat' requires state='track', 'context' or 'off'"
+            )
+        spotify_client.repeat(state, device_id=device_id)
+    else:
+        raise ValueError(f"Invalid action: {action}")
 
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _await_playback(
+        _playback_confirmed(
+            action,
+            previous_track_id=previous_track_id,
+            position_ms=position_ms,
+            volume_percent=volume_percent,
+            state=state,
+        )
+    )
 
 
 @mcp.tool(
@@ -929,23 +899,19 @@ def list_devices() -> DeviceList:
     Returns:
         DeviceList; use transfer_playback with a device id to make one active
     """
-    try:
-        logger.info("📱 Listing devices")
-        result = spotify_client.devices() or {}
-        return DeviceList(
-            devices=[
-                Device(
-                    id=d.get("id"),
-                    name=d["name"],
-                    type=d.get("type"),
-                    is_active=d.get("is_active", False),
-                    volume_percent=d.get("volume_percent"),
-                )
-                for d in result.get("devices", [])
-            ]
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    result = spotify_client.devices() or {}
+    return DeviceList(
+        devices=[
+            Device(
+                id=d.get("id"),
+                name=d["name"],
+                type=d.get("type"),
+                is_active=d.get("is_active", False),
+                volume_percent=d.get("volume_percent"),
+            )
+            for d in result.get("devices", [])
+        ]
+    )
 
 
 @mcp.tool(
@@ -966,12 +932,8 @@ def transfer_playback(device_id: str, play: bool = True) -> ActionResult:
         device_id: Target device ID
         play: Start playing after the transfer (default True)
     """
-    try:
-        logger.info(f"📱 Transferring playback to {device_id} (play={play})")
-        spotify_client.transfer_playback(device_id, force_play=play)
-        return ActionResult(status="success", message="Playback transferred")
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    spotify_client.transfer_playback(device_id, force_play=play)
+    return ActionResult(status="success", message="Playback transferred")
 
 
 @mcp.tool(
@@ -1021,69 +983,59 @@ def search_music(
         raise ValueError(
             f"qtype must be 'track', 'album', 'artist' or 'playlist', got {qtype!r}"
         )
-    try:
-        limit = max(1, min(spotify_api.SEARCH_LIMIT_MAX, limit))
+    limit = max(1, min(spotify_api.SEARCH_LIMIT_MAX, limit))
 
-        # Build filtered query
-        filters = []
-        if artist:
-            filters.append(f"artist:{artist}")
-        if album:
-            filters.append(f"album:{album}")
-        if year:
-            filters.append(f"year:{year}")
-        if year_range:
-            filters.append(f"year:{year_range}")
-        if genre:
-            filters.append(f"genre:{genre}")
+    # Build filtered query
+    filters = []
+    if artist:
+        filters.append(f"artist:{artist}")
+    if album:
+        filters.append(f"album:{album}")
+    if year:
+        filters.append(f"year:{year}")
+    if year_range:
+        filters.append(f"year:{year_range}")
+    if genre:
+        filters.append(f"genre:{genre}")
 
-        full_query = " ".join([query] + filters) if filters else query
+    full_query = " ".join([query] + filters) if filters else query
 
-        logger.info(
-            f"🔍 Searching {qtype}s: '{full_query}' (limit={limit}, offset={offset})"
-        )
-        result = spotify_api.search(
-            spotify_client, full_query, qtype=qtype, limit=limit, offset=offset
-        )
+    result = spotify_api.search(
+        spotify_client, full_query, qtype=qtype, limit=limit, offset=offset
+    )
 
-        tracks = []
-        items_key = f"{qtype}s"
-        result_section = result.get(items_key, {})
-        # Spotify can return null entries in items (e.g. removed content), so guard each.
-        if qtype == "track" and result_section.get("items"):
-            tracks = [parse_track(item) for item in result_section["items"] if item]
-        else:
-            # Convert other types to track-like format for consistency
-            if result_section.get("items"):
-                for item in result_section["items"]:
-                    if not item:
-                        continue
-                    track = Track(
-                        name=item["name"],
-                        id=item["id"],
-                        artist=item.get("artists", [{}])[0].get("name", "Unknown")
-                        if qtype != "artist"
-                        else item["name"],
-                        external_urls=item.get("external_urls"),
-                    )
-                    tracks.append(track)
+    tracks = []
+    items_key = f"{qtype}s"
+    result_section = result.get(items_key, {})
+    # Spotify can return null entries in items (e.g. removed content), so guard each.
+    if qtype == "track" and result_section.get("items"):
+        tracks = [parse_track(item) for item in result_section["items"] if item]
+    else:
+        # Convert other types to track-like format for consistency
+        if result_section.get("items"):
+            for item in result_section["items"]:
+                if not item:
+                    continue
+                track = Track(
+                    name=item["name"],
+                    id=item["id"],
+                    artist=item.get("artists", [{}])[0].get("name", "Unknown")
+                    if qtype != "artist"
+                    else item["name"],
+                    external_urls=item.get("external_urls"),
+                )
+                tracks.append(track)
 
-        total_results = result_section.get("total", 0)
-        logger.info(
-            f"🔍 Search returned {len(tracks)} items (total available: {total_results})"
-        )
-        log_pagination_info("search_music", total_results, limit, offset)
+    total_results = result_section.get("total", 0)
 
-        return SearchResults(
-            items=tracks,
-            total=total_results,
-            limit=result_section.get("limit", limit),
-            offset=result_section.get("offset", offset),
-            next=result_section.get("next"),
-            previous=result_section.get("previous"),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return SearchResults(
+        items=tracks,
+        total=total_results,
+        limit=result_section.get("limit", limit),
+        offset=result_section.get("offset", offset),
+        next=result_section.get("next"),
+        previous=result_section.get("previous"),
+    )
 
 
 @mcp.tool(
@@ -1106,16 +1058,12 @@ def add_to_queue(track_id: str) -> ActionResult:
     Returns:
         Status and message
     """
-    try:
-        logger.info(f"🎵 Adding {track_id} to queue")
-        # Not string formatting: a URI or share URL would otherwise be pasted
-        # into `spotify:track:` a second time, and an episode would become a track.
-        uri = to_playable_uri(track_id)
-        spotify_client.add_to_queue(uri)
-        kind = uri.split(":")[1]
-        return ActionResult(status="success", message=f"Added {kind} to queue")
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    # Not string formatting: a URI or share URL would otherwise be pasted
+    # into `spotify:track:` a second time, and an episode would become a track.
+    uri = to_playable_uri(track_id)
+    spotify_client.add_to_queue(uri)
+    kind = uri.split(":")[1]
+    return ActionResult(status="success", message=f"Added {kind} to queue")
 
 
 @mcp.tool(
@@ -1131,22 +1079,18 @@ def get_queue() -> QueueState:
     Returns:
         Currently playing track and queue of upcoming tracks
     """
-    try:
-        logger.info("🎵 Getting playback queue")
-        result = spotify_client.queue()
+    result = spotify_client.queue()
 
-        queue_tracks = []
-        if result.get("queue"):
-            queue_tracks = [parse_track(item) for item in result["queue"]]
+    queue_tracks = []
+    if result.get("queue"):
+        queue_tracks = [parse_track(item) for item in result["queue"]]
 
-        return QueueState(
-            currently_playing=parse_track(result["currently_playing"])
-            if result.get("currently_playing")
-            else None,
-            queue=queue_tracks,
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return QueueState(
+        currently_playing=parse_track(result["currently_playing"])
+        if result.get("currently_playing")
+        else None,
+        queue=queue_tracks,
+    )
 
 
 @mcp.tool(
@@ -1172,24 +1116,19 @@ def get_tracks(track_ids: str | list[str]) -> TrackList:
     apps, in which case this transparently falls back to one request per track,
     so the result is the same either way.
     """
-    try:
-        # Normalize to list
-        ids = [track_ids] if isinstance(track_ids, str) else track_ids
+    # Normalize to list
+    ids = [track_ids] if isinstance(track_ids, str) else track_ids
 
-        if len(ids) > 50:
-            raise ValueError("Maximum 50 track IDs per request (Spotify API limit)")
+    if len(ids) > 50:
+        raise ValueError("Maximum 50 track IDs per request (Spotify API limit)")
 
-        logger.info(f"🎵 Getting track info for {len(ids)} track(s)")
+    tracks = [
+        parse_track(cast("TrackObject", item))
+        for item in spotify_api.get_tracks(spotify_client, ids)
+        if item
+    ]
 
-        tracks = [
-            parse_track(cast("TrackObject", item))
-            for item in spotify_api.get_tracks(spotify_client, ids)
-            if item
-        ]
-
-        return TrackList(tracks=tracks)
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return TrackList(tracks=tracks)
 
 
 # /artists/{id}/top-tracks is withheld from restricted apps: it answers 403
@@ -1206,10 +1145,6 @@ def _artist_top_tracks_or_empty(artist_id: str) -> dict:
     except SpotifyException as e:
         if e.http_status != 403:
             raise
-        logger.info(
-            f"🎤 Top tracks withheld for artist {artist_id} "
-            f"(HTTP {e.http_status}); returning artist without them"
-        )
         return {}
 
 
@@ -1233,27 +1168,17 @@ def get_artist(artist_ids: str | list[str]) -> ArtistInfo:
         an error when Spotify withholds that endpoint.
     """
     ids = [artist_ids] if isinstance(artist_ids, str) else list(artist_ids)
-    limit = spotify_api.BATCH_LIMITS["artist"]
-    if not ids:
-        raise ValueError("At least one artist ID is required")
-    if len(ids) > limit:
-        raise ValueError(f"Maximum {limit} artists per request, got {len(ids)}")
+    _check_batch("artist", ids)
 
-    try:
-        logger.info(f"🎤 Getting {len(ids)} artist(s)")
-        results = cast(
-            "list[ArtistObject]", spotify_api.get_artists(spotify_client, ids)
-        )
-        artists = [parse_artist(result) for result in results]
+    results = cast("list[ArtistObject]", spotify_api.get_artists(spotify_client, ids))
+    artists = [parse_artist(result) for result in results]
 
-        tracks: list[Track] = []
-        if len(ids) == 1 and artists:
-            top_tracks = _artist_top_tracks_or_empty(artists[0].id)
-            tracks = [parse_track(t) for t in top_tracks.get("tracks", [])[:10]]
+    tracks: list[Track] = []
+    if len(ids) == 1 and artists:
+        top_tracks = _artist_top_tracks_or_empty(artists[0].id)
+        tracks = [parse_track(t) for t in top_tracks.get("tracks", [])[:10]]
 
-        return ArtistInfo(artists=artists, top_tracks=tracks)
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return ArtistInfo(artists=artists, top_tracks=tracks)
 
 
 def _total_tracks(playlist_id: str, reported: object) -> int | None:
@@ -1269,6 +1194,23 @@ def _total_tracks(playlist_id: str, reported: object) -> int | None:
         return None
 
 
+def _playlist_metadata(playlist_id: str) -> Playlist:
+    """Read a playlist's metadata, without its tracks."""
+    result: PlaylistObject = spotify_client.playlist(
+        playlist_id, fields="id,name,description,owner,public,tracks.total"
+    )
+    owner = result.get("owner") or {}
+    tracks = result.get("tracks") or {}
+    return Playlist(
+        name=result["name"],
+        id=result["id"],
+        owner=owner.get("display_name"),
+        description=result.get("description"),
+        total_tracks=_total_tracks(playlist_id, tracks.get("total")),
+        public=result.get("public"),
+    )
+
+
 @mcp.tool(
     title="Get Playlist",
     annotations=ToolAnnotations(
@@ -1278,38 +1220,15 @@ def _total_tracks(playlist_id: str, reported: object) -> int | None:
 )
 @log_tool_execution
 def get_playlist(playlist_id: str) -> Playlist:
-    """Get basic information about a Spotify playlist.
+    """Get a playlist's metadata. Use get_playlist_tracks for its tracks.
 
     Args:
         playlist_id: Spotify playlist ID
 
     Returns:
-        Playlist metadata (no tracks - use get_playlist_tracks for tracks)
-
-    Note: This returns playlist info only. For tracks, use get_playlist_tracks
-    which supports full pagination for large playlists.
+        Playlist metadata with total_tracks and no track list
     """
-    try:
-        logger.info(f"📋 Getting playlist info: {playlist_id}")
-        result: PlaylistObject = spotify_client.playlist(
-            playlist_id, fields="id,name,description,owner,public,tracks.total"
-        )
-
-        owner = result.get("owner") or {}
-        tracks = result.get("tracks") or {}
-        playlist = Playlist(
-            name=result["name"],
-            id=result["id"],
-            owner=owner.get("display_name"),
-            description=result.get("description"),
-            tracks=None,  # No tracks - use get_playlist_tracks
-            total_tracks=_total_tracks(playlist_id, tracks.get("total")),
-            public=result.get("public"),
-        )
-
-        return playlist
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _playlist_metadata(playlist_id)
 
 
 @mcp.tool(
@@ -1334,24 +1253,19 @@ def create_playlist(name: str, description: str = "", public: bool = False) -> P
     Returns:
         The created Playlist
     """
-    try:
-        logger.info(f"🎧 Creating playlist: '{name}' (public={public})")
-        result = spotify_api.create_playlist(spotify_client, name, description, public)
+    result = spotify_api.create_playlist(spotify_client, name, description, public)
 
-        playlist = Playlist(
-            name=result["name"],
-            id=result["id"],
-            owner=result.get("owner", {}).get("display_name"),
-            description=result.get("description"),
-            tracks=[],
-            total_tracks=0,
-            public=result.get("public"),
-        )
+    playlist = Playlist(
+        name=result["name"],
+        id=result["id"],
+        owner=result.get("owner", {}).get("display_name"),
+        description=result.get("description"),
+        tracks=[],
+        total_tracks=0,
+        public=result.get("public"),
+    )
 
-        return playlist
-
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return playlist
 
 
 @mcp.tool(
@@ -1373,19 +1287,14 @@ def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> ActionRes
         track_uris: Track or episode URIs/URLs (up to 100). Bare IDs are tracks;
             pass spotify:episode: URIs or episode URLs for episodes.
     """
-    try:
-        uris = [to_playable_uri(uri) for uri in track_uris]
+    uris = [to_playable_uri(uri) for uri in track_uris]
 
-        logger.info(f"🎧 Adding {len(uris)} tracks to playlist {playlist_id}")
-        result = spotify_api.playlist_add_items(spotify_client, playlist_id, uris)
-        return ActionResult(
-            status="success",
-            message=f"Added {len(uris)} tracks to playlist",
-            snapshot_id=result.get("snapshot_id") if result else None,
-        )
-
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    result = spotify_api.playlist_add_items(spotify_client, playlist_id, uris)
+    return ActionResult(
+        status="success",
+        message=f"Added {len(uris)} tracks to playlist",
+        snapshot_id=result.get("snapshot_id") if result else None,
+    )
 
 
 @mcp.tool(
@@ -1409,42 +1318,36 @@ def list_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
     Note: For users with many playlists, use offset to paginate through results.
     Example: offset=0 gets playlists 1-20, offset=20 gets playlists 21-40, etc.
     """
-    try:
-        # Validate limit (Spotify API accepts 1-50)
-        limit = max(1, min(50, limit))
+    # Validate limit (Spotify API accepts 1-50)
+    limit = max(1, min(50, limit))
 
-        logger.info(f"📋 Getting user playlists (limit={limit}, offset={offset})")
-        result = spotify_client.current_user_playlists(limit=limit, offset=offset)
+    result = spotify_client.current_user_playlists(limit=limit, offset=offset)
 
-        # Log pagination info
-        log_pagination_info("list_playlists", result.get("total", 0), limit, offset)
+    # Log pagination info
 
-        playlists = []
-        for item in result.get("items", []):
-            item_typed = cast("PlaylistObject", item)
-            owner = item_typed.get("owner") or {}
-            tracks = item_typed.get("tracks") or {}
-            playlist = Playlist(
-                name=item_typed["name"],
-                id=item_typed["id"],
-                owner=owner.get("display_name"),
-                description=item_typed.get("description"),
-                total_tracks=tracks.get("total"),
-                public=item_typed.get("public"),
-            )
-            playlists.append(playlist)
-
-        return PlaylistList(
-            items=playlists,
-            total=result.get("total", 0),
-            limit=result.get("limit", limit),
-            offset=result.get("offset", offset),
-            next=result.get("next"),
-            previous=result.get("previous"),
+    playlists = []
+    for item in result.get("items", []):
+        item_typed = cast("PlaylistObject", item)
+        owner = item_typed.get("owner") or {}
+        tracks = item_typed.get("tracks") or {}
+        playlist = Playlist(
+            name=item_typed["name"],
+            id=item_typed["id"],
+            owner=owner.get("display_name"),
+            description=item_typed.get("description"),
+            total_tracks=tracks.get("total"),
+            public=item_typed.get("public"),
         )
+        playlists.append(playlist)
 
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return PlaylistList(
+        items=playlists,
+        total=result.get("total", 0),
+        limit=result.get("limit", limit),
+        offset=result.get("offset", offset),
+        next=result.get("next"),
+        previous=result.get("previous"),
+    )
 
 
 @mcp.tool(
@@ -1476,39 +1379,26 @@ async def get_playlist_tracks(
     - Get next 100: limit=100, offset=100
     - Get all tracks: limit=None (use with caution on very large playlists)
     """
-    try:
-        logger.info(
-            f"📋 Getting playlist tracks: {playlist_id} (limit={limit}, offset={offset})"
-        )
+    # Metadata first: it survives a restricted regime that forbids contents,
+    # and _total_tracks falls back to the items cursor when it is stripped.
+    # Spotify calls run on a worker thread so they don't block the event loop.
+    playlist_info = await asyncio.to_thread(
+        spotify_client.playlist, playlist_id, fields="tracks.total"
+    )
+    total_tracks = await asyncio.to_thread(
+        _total_tracks, playlist_id, (playlist_info.get("tracks") or {}).get("total")
+    )
 
-        # Metadata first: it survives a restricted regime that forbids contents,
-        # and _total_tracks falls back to the items cursor when it is stripped.
-        # A direct spotipy playlist_items() call would bypass the regime fallback.
-        playlist_info = spotify_client.playlist(playlist_id, fields="tracks.total")
-        total_tracks = _total_tracks(
-            playlist_id, (playlist_info.get("tracks") or {}).get("total")
-        )
-
-        tracks = await get_playlist_tracks_paginated(
-            playlist_id, limit, offset, ctx=ctx, total=total_tracks
-        )
-        if total_tracks is None:
-            total_tracks = len(tracks)
-
-        # Log pagination info
-        log_pagination_info("get_playlist_tracks", total_tracks, limit, offset)
-        logger.info(f"📋 Retrieved {len(tracks)} tracks from playlist {playlist_id}")
-
-        return PlaylistTracks(
-            items=tracks,
-            total=total_tracks,
-            limit=limit,
-            offset=offset,
-            returned=len(tracks),
-        )
-
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    tracks = await get_playlist_tracks_paginated(
+        playlist_id, limit, offset, ctx=ctx, total=total_tracks
+    )
+    return PlaylistTracks(
+        items=tracks,
+        total=len(tracks) if total_tracks is None else total_tracks,
+        limit=limit,
+        offset=offset,
+        returned=len(tracks),
+    )
 
 
 def _client_can_elicit_form(ctx: Context) -> bool:
@@ -1524,7 +1414,7 @@ def _client_can_elicit_form(ctx: Context) -> bool:
     )
 
 
-async def confirm_removal(
+def confirm_removal(
     playlist_id: str, track_uris: list[str], ctx: Context
 ) -> RemovalConfirmation | Elicit[RemovalConfirmation]:
     """Resolver that asks the user before tracks leave a playlist.
@@ -1560,7 +1450,7 @@ async def confirm_removal(
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
-async def remove_tracks_from_playlist(
+def remove_tracks_from_playlist(
     playlist_id: str,
     track_uris: list[str],
     confirmation: Annotated[
@@ -1573,28 +1463,23 @@ async def remove_tracks_from_playlist(
         playlist_id: Playlist ID
         track_uris: Track or episode URIs/URLs to remove. Bare IDs are tracks.
     """
-    try:
-        uris = [to_playable_uri(uri) for uri in track_uris]
+    uris = [to_playable_uri(uri) for uri in track_uris]
 
-        # Decline, cancel, or accepting with the box unticked all keep the tracks.
-        if not (
-            isinstance(confirmation, AcceptedElicitation) and confirmation.data.confirm
-        ):
-            return ActionResult(
-                status="cancelled",
-                message="Removal cancelled by user",
-            )
-
-        logger.info(f"🚮 Removing {len(uris)} tracks from playlist {playlist_id}")
-        result = spotify_api.playlist_remove_items(spotify_client, playlist_id, uris)
+    # Decline, cancel, or accepting with the box unticked all keep the tracks.
+    if not (
+        isinstance(confirmation, AcceptedElicitation) and confirmation.data.confirm
+    ):
         return ActionResult(
-            status="success",
-            message=f"Removed {len(uris)} tracks from playlist",
-            snapshot_id=result.get("snapshot_id") if result else None,
+            status="cancelled",
+            message="Removal cancelled by user",
         )
 
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    result = spotify_api.playlist_remove_items(spotify_client, playlist_id, uris)
+    return ActionResult(
+        status="success",
+        message=f"Removed {len(uris)} tracks from playlist",
+        snapshot_id=result.get("snapshot_id") if result else None,
+    )
 
 
 @mcp.tool(
@@ -1623,30 +1508,17 @@ def update_playlist_details(
         description: New playlist description (optional)
         public: Whether playlist should be public (optional)
     """
-    try:
-        if not name and not description and public is None:
-            raise ValueError(
-                "At least one of name, description, or public must be provided"
-            )
-
-        updates = []
-        if name:
-            updates.append(f"name='{name}'")
-        if description:
-            updates.append(f"description='{description}'")
-        if public is not None:
-            updates.append(f"public={public}")
-        logger.info(f"📋 Modifying playlist {playlist_id}: {', '.join(updates)}")
-
-        spotify_client.playlist_change_details(
-            playlist_id, name=name, description=description, public=public
-        )
-        return ActionResult(
-            status="success", message="Playlist details updated successfully"
+    if not name and not description and public is None:
+        raise ValueError(
+            "At least one of name, description, or public must be provided"
         )
 
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    spotify_client.playlist_change_details(
+        playlist_id, name=name, description=description, public=public
+    )
+    return ActionResult(
+        status="success", message="Playlist details updated successfully"
+    )
 
 
 @mcp.tool(
@@ -1684,34 +1556,27 @@ def reorder_playlist(
     Note: Positions are zero-based. Example: move the first 3 tracks to just
     before position 10 with range_start=0, range_length=3, insert_before=10.
     """
-    try:
-        if range_start < 0 or insert_before < 0:
-            raise ValueError("range_start and insert_before must be >= 0")
-        if range_length < 1:
-            raise ValueError("range_length must be >= 1")
+    if range_start < 0 or insert_before < 0:
+        raise ValueError("range_start and insert_before must be >= 0")
+    if range_length < 1:
+        raise ValueError("range_length must be >= 1")
 
-        logger.info(
-            f"🔀 Reordering playlist {playlist_id}: move {range_length} track(s) "
-            f"from {range_start} before {insert_before}"
-        )
-        result = spotify_api.playlist_reorder_items(
-            spotify_client,
-            playlist_id,
-            range_start=range_start,
-            insert_before=insert_before,
-            range_length=range_length,
-            snapshot_id=snapshot_id,
-        )
-        return ActionResult(
-            status="success",
-            message=(
-                f"Moved {range_length} track(s) from position {range_start} "
-                f"to before position {insert_before}"
-            ),
-            snapshot_id=result.get("snapshot_id") if result else None,
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    result = spotify_api.playlist_reorder_items(
+        spotify_client,
+        playlist_id,
+        range_start=range_start,
+        insert_before=insert_before,
+        range_length=range_length,
+        snapshot_id=snapshot_id,
+    )
+    return ActionResult(
+        status="success",
+        message=(
+            f"Moved {range_length} track(s) from position {range_start} "
+            f"to before position {insert_before}"
+        ),
+        snapshot_id=result.get("snapshot_id") if result else None,
+    )
 
 
 @mcp.tool(
@@ -1734,38 +1599,30 @@ def get_album(album_ids: str | list[str]) -> AlbumInfo:
         album's track list only when a single album was requested.
     """
     ids = [album_ids] if isinstance(album_ids, str) else list(album_ids)
-    limit = spotify_api.BATCH_LIMITS["album"]
-    if not ids:
-        raise ValueError("At least one album ID is required")
-    if len(ids) > limit:
-        raise ValueError(f"Maximum {limit} albums per request, got {len(ids)}")
+    _check_batch("album", ids)
 
-    try:
-        logger.info(f"💿 Getting {len(ids)} album(s)")
-        results = cast("list[AlbumObject]", spotify_api.get_albums(spotify_client, ids))
+    results = cast("list[AlbumObject]", spotify_api.get_albums(spotify_client, ids))
 
-        albums = [parse_album(result) for result in results]
+    albums = [parse_album(result) for result in results]
 
-        # Album track items carry no album of their own, so stamp the parent on.
-        tracks = []
-        if len(ids) == 1 and results:
-            parent = results[0]
-            # Typed as list[dict] so the empty-row guard stays reachable: Spotify
-            # sends null items, which the TypedDict shape does not admit.
-            items = cast("list[dict]", (parent.get("tracks") or {}).get("items") or [])
-            for item in items:
-                if not item:
-                    continue
-                item["album"] = {
-                    "name": parent["name"],
-                    "id": parent["id"],
-                    "release_date": parent.get("release_date"),
-                }
-                tracks.append(parse_track(cast("TrackObject", item)))
+    # Album track items carry no album of their own, so stamp the parent on.
+    tracks = []
+    if len(ids) == 1 and results:
+        parent = results[0]
+        # Typed as list[dict] so the empty-row guard stays reachable: Spotify
+        # sends null items, which the TypedDict shape does not admit.
+        items = cast("list[dict]", (parent.get("tracks") or {}).get("items") or [])
+        for item in items:
+            if not item:
+                continue
+            item["album"] = {
+                "name": parent["name"],
+                "id": parent["id"],
+                "release_date": parent.get("release_date"),
+            }
+            tracks.append(parse_track(cast("TrackObject", item)))
 
-        return AlbumInfo(albums=albums, tracks=tracks)
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return AlbumInfo(albums=albums, tracks=tracks)
 
 
 @mcp.tool(
@@ -1786,47 +1643,32 @@ def get_saved_tracks(limit: int = 20, offset: int = 0) -> SavedTracks:
     Returns:
         SavedTracks with 'items' (tracks with added_at timestamp) and pagination info
     """
-    try:
-        limit = max(1, min(50, limit))
+    limit = max(1, min(50, limit))
 
-        logger.info(f"❤️ Getting saved tracks (limit={limit}, offset={offset})")
-        result = spotify_client.current_user_saved_tracks(limit=limit, offset=offset)
+    result = spotify_client.current_user_saved_tracks(limit=limit, offset=offset)
 
-        tracks = []
-        for item in result.get("items", []):
-            if item and item.get("track"):
-                track = parse_track(item["track"])
-                track.added_at = item.get("added_at")
-                tracks.append(track)
+    tracks = []
+    for item in result.get("items", []):
+        if item and item.get("track"):
+            track = parse_track(item["track"])
+            track.added_at = item.get("added_at")
+            tracks.append(track)
 
-        log_pagination_info("get_saved_tracks", result.get("total", 0), limit, offset)
-
-        return SavedTracks(
-            items=tracks,
-            total=result.get("total", 0),
-            limit=result.get("limit", limit),
-            offset=result.get("offset", offset),
-            next=result.get("next"),
-            previous=result.get("previous"),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return SavedTracks(
+        items=tracks,
+        total=result.get("total", 0),
+        limit=result.get("limit", limit),
+        offset=result.get("offset", offset),
+        next=result.get("next"),
+        previous=result.get("previous"),
+    )
 
 
 def _library_write(
     kind: str, ids: list[str], write: Callable[[list[str]], None], done: str
 ) -> ActionResult:
-    """Validate a library write against the kind's public cap, run it, report it.
-
-    Upstream requests are chunked at 40 regardless of the cap.
-    """
-    limit = spotify_api.BATCH_LIMITS[kind]
-    if not ids:
-        raise ValueError(f"At least one {kind} ID is required")
-    if len(ids) > limit:
-        raise ValueError(f"Maximum {limit} {kind} IDs per request, got {len(ids)}")
-
-    logger.info(f"📚 {done} {len(ids)} {kind}(s)")
+    """Validate a library write, run it, report it."""
+    _check_batch(kind, ids)
     write(ids)
     return ActionResult(status="success", message=f"{done} {len(ids)} {kind}(s)")
 
@@ -1848,15 +1690,12 @@ def save_tracks(track_ids: list[str]) -> ActionResult:
     Args:
         track_ids: Track IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "track",
-            track_ids,
-            lambda ids: spotify_api.save_tracks(spotify_client, ids),
-            "Saved",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "track",
+        track_ids,
+        lambda ids: spotify_api.save_tracks(spotify_client, ids),
+        "Saved",
+    )
 
 
 @mcp.tool(
@@ -1876,28 +1715,20 @@ def remove_saved_tracks(track_ids: list[str]) -> ActionResult:
     Args:
         track_ids: Track IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "track",
-            track_ids,
-            lambda ids: spotify_api.remove_saved_tracks(spotify_client, ids),
-            "Removed",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "track",
+        track_ids,
+        lambda ids: spotify_api.remove_saved_tracks(spotify_client, ids),
+        "Removed",
+    )
 
 
 def _membership(
     kind: str, ids: list[str], read: Callable[[list[str]], list[bool]]
 ) -> MembershipStatus:
     """Ask Spotify which ids are already saved or followed in bounded requests."""
-    limit = spotify_api.BATCH_LIMITS[kind]
-    if not ids:
-        raise ValueError(f"At least one {kind} ID is required")
-    if len(ids) > limit:
-        raise ValueError(f"Maximum {limit} {kind} IDs per request, got {len(ids)}")
+    _check_batch(kind, ids)
 
-    logger.info(f"🔎 Checking {len(ids)} {kind}(s) against the library")
     flags = read(ids)
     # Spotify answers positionally; key by the id it answered for so the caller
     # cannot mis-zip the two lists.
@@ -1926,14 +1757,11 @@ def check_saved_tracks(track_ids: list[str]) -> MembershipStatus:
     Returns:
         MembershipStatus.results maps each Spotify track id to true if liked
     """
-    try:
-        return _membership(
-            "track",
-            track_ids,
-            lambda ids: spotify_api.saved_tracks_contains(spotify_client, ids),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _membership(
+        "track",
+        track_ids,
+        lambda ids: spotify_api.saved_tracks_contains(spotify_client, ids),
+    )
 
 
 @mcp.tool(
@@ -1954,14 +1782,11 @@ def check_saved_albums(album_ids: list[str]) -> MembershipStatus:
     Returns:
         MembershipStatus.results maps each Spotify album id to true if saved
     """
-    try:
-        return _membership(
-            "album",
-            album_ids,
-            lambda ids: spotify_api.saved_albums_contains(spotify_client, ids),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _membership(
+        "album",
+        album_ids,
+        lambda ids: spotify_api.saved_albums_contains(spotify_client, ids),
+    )
 
 
 @mcp.tool(
@@ -1983,14 +1808,11 @@ def check_following_artists(artist_ids: list[str]) -> MembershipStatus:
     Returns:
         MembershipStatus.results maps each Spotify artist id to true if followed
     """
-    try:
-        return _membership(
-            "artist",
-            artist_ids,
-            lambda ids: spotify_api.following_artists_contains(spotify_client, ids),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _membership(
+        "artist",
+        artist_ids,
+        lambda ids: spotify_api.following_artists_contains(spotify_client, ids),
+    )
 
 
 @mcp.tool(
@@ -2011,33 +1833,25 @@ def get_saved_albums(limit: int = 20, offset: int = 0) -> SavedAlbums:
     Returns:
         SavedAlbums with 'items' (albums with added_at) and pagination info
     """
-    try:
-        limit = max(1, min(50, limit))
+    limit = max(1, min(50, limit))
 
-        logger.info(f"💿 Getting saved albums (limit={limit}, offset={offset})")
-        result = (
-            spotify_client.current_user_saved_albums(limit=limit, offset=offset) or {}
-        )
+    result = spotify_client.current_user_saved_albums(limit=limit, offset=offset) or {}
 
-        albums = []
-        for item in result.get("items", []):
-            if item and item.get("album"):
-                album = parse_album(item["album"])
-                album.added_at = item.get("added_at")
-                albums.append(album)
+    albums = []
+    for item in result.get("items", []):
+        if item and item.get("album"):
+            album = parse_album(item["album"])
+            album.added_at = item.get("added_at")
+            albums.append(album)
 
-        log_pagination_info("get_saved_albums", result.get("total", 0), limit, offset)
-
-        return SavedAlbums(
-            items=albums,
-            total=result.get("total", 0),
-            limit=result.get("limit", limit),
-            offset=result.get("offset", offset),
-            next=result.get("next"),
-            previous=result.get("previous"),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return SavedAlbums(
+        items=albums,
+        total=result.get("total", 0),
+        limit=result.get("limit", limit),
+        offset=result.get("offset", offset),
+        next=result.get("next"),
+        previous=result.get("previous"),
+    )
 
 
 @mcp.tool(
@@ -2057,15 +1871,12 @@ def save_albums(album_ids: list[str]) -> ActionResult:
     Args:
         album_ids: Album IDs or URIs (up to 20)
     """
-    try:
-        return _library_write(
-            "album",
-            album_ids,
-            lambda ids: spotify_api.save_albums(spotify_client, ids),
-            "Saved",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "album",
+        album_ids,
+        lambda ids: spotify_api.save_albums(spotify_client, ids),
+        "Saved",
+    )
 
 
 @mcp.tool(
@@ -2085,15 +1896,12 @@ def remove_saved_albums(album_ids: list[str]) -> ActionResult:
     Args:
         album_ids: Album IDs or URIs (up to 20)
     """
-    try:
-        return _library_write(
-            "album",
-            album_ids,
-            lambda ids: spotify_api.remove_saved_albums(spotify_client, ids),
-            "Removed",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "album",
+        album_ids,
+        lambda ids: spotify_api.remove_saved_albums(spotify_client, ids),
+        "Removed",
+    )
 
 
 @mcp.tool(
@@ -2114,24 +1922,20 @@ def get_followed_artists(limit: int = 20, after: str | None = None) -> FollowedA
     Returns:
         FollowedArtists; pass its `after` back for the next page (None on the last)
     """
-    try:
-        limit = max(1, min(50, limit))
+    limit = max(1, min(50, limit))
 
-        logger.info(f"🎤 Getting followed artists (limit={limit}, after={after})")
-        result = spotify_client.current_user_followed_artists(
-            limit=limit, after=to_id(after) if after else None
-        )
-        page = (result or {}).get("artists") or {}
+    result = spotify_client.current_user_followed_artists(
+        limit=limit, after=to_id(after) if after else None
+    )
+    page = (result or {}).get("artists") or {}
 
-        return FollowedArtists(
-            items=[parse_artist(a) for a in page.get("items", []) if a],
-            total=page.get("total"),
-            limit=page.get("limit", limit),
-            after=(page.get("cursors") or {}).get("after"),
-            next=page.get("next"),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return FollowedArtists(
+        items=[parse_artist(a) for a in page.get("items", []) if a],
+        total=page.get("total"),
+        limit=page.get("limit", limit),
+        after=(page.get("cursors") or {}).get("after"),
+        next=page.get("next"),
+    )
 
 
 @mcp.tool(
@@ -2151,15 +1955,12 @@ def follow_artists(artist_ids: list[str]) -> ActionResult:
     Args:
         artist_ids: Artist IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "artist",
-            artist_ids,
-            lambda ids: spotify_api.follow_artists(spotify_client, ids),
-            "Followed",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "artist",
+        artist_ids,
+        lambda ids: spotify_api.follow_artists(spotify_client, ids),
+        "Followed",
+    )
 
 
 @mcp.tool(
@@ -2179,15 +1980,12 @@ def unfollow_artists(artist_ids: list[str]) -> ActionResult:
     Args:
         artist_ids: Artist IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "artist",
-            artist_ids,
-            lambda ids: spotify_api.unfollow_artists(spotify_client, ids),
-            "Unfollowed",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "artist",
+        artist_ids,
+        lambda ids: spotify_api.unfollow_artists(spotify_client, ids),
+        "Unfollowed",
+    )
 
 
 @mcp.tool(
@@ -2207,12 +2005,8 @@ def follow_playlist(playlist_id: str) -> ActionResult:
     Args:
         playlist_id: Playlist ID, URI or open.spotify.com URL
     """
-    try:
-        logger.info(f"📋 Following playlist {playlist_id}")
-        spotify_api.follow_playlist(spotify_client, playlist_id)
-        return ActionResult(status="success", message="Playlist followed")
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    spotify_api.follow_playlist(spotify_client, playlist_id)
+    return ActionResult(status="success", message="Playlist followed")
 
 
 @mcp.tool(
@@ -2235,12 +2029,8 @@ def unfollow_playlist(playlist_id: str) -> ActionResult:
     Args:
         playlist_id: Playlist ID or URI
     """
-    try:
-        logger.info(f"🚮 Unfollowing playlist {playlist_id}")
-        spotify_api.unfollow_playlist(spotify_client, playlist_id)
-        return ActionResult(status="success", message="Playlist unfollowed/deleted")
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    spotify_api.unfollow_playlist(spotify_client, playlist_id)
+    return ActionResult(status="success", message="Playlist unfollowed/deleted")
 
 
 @mcp.tool(
@@ -2261,33 +2051,25 @@ def get_saved_shows(limit: int = 20, offset: int = 0) -> SavedShows:
     Returns:
         SavedShows with 'items' (shows with added_at) and pagination info
     """
-    try:
-        limit = max(1, min(50, limit))
+    limit = max(1, min(50, limit))
 
-        logger.info(f"🎙️ Getting saved shows (limit={limit}, offset={offset})")
-        result = (
-            spotify_client.current_user_saved_shows(limit=limit, offset=offset) or {}
-        )
+    result = spotify_client.current_user_saved_shows(limit=limit, offset=offset) or {}
 
-        shows = []
-        for item in result.get("items", []):
-            if item and item.get("show"):
-                show = parse_show(item["show"])
-                show.added_at = item.get("added_at")
-                shows.append(show)
+    shows = []
+    for item in result.get("items", []):
+        if item and item.get("show"):
+            show = parse_show(item["show"])
+            show.added_at = item.get("added_at")
+            shows.append(show)
 
-        log_pagination_info("get_saved_shows", result.get("total", 0), limit, offset)
-
-        return SavedShows(
-            items=shows,
-            total=result.get("total", 0),
-            limit=result.get("limit", limit),
-            offset=result.get("offset", offset),
-            next=result.get("next"),
-            previous=result.get("previous"),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return SavedShows(
+        items=shows,
+        total=result.get("total", 0),
+        limit=result.get("limit", limit),
+        offset=result.get("offset", offset),
+        next=result.get("next"),
+        previous=result.get("previous"),
+    )
 
 
 @mcp.tool(
@@ -2307,15 +2089,12 @@ def save_shows(show_ids: list[str]) -> ActionResult:
     Args:
         show_ids: Show IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "show",
-            show_ids,
-            lambda ids: spotify_api.save_shows(spotify_client, ids),
-            "Saved",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "show",
+        show_ids,
+        lambda ids: spotify_api.save_shows(spotify_client, ids),
+        "Saved",
+    )
 
 
 @mcp.tool(
@@ -2335,15 +2114,12 @@ def remove_saved_shows(show_ids: list[str]) -> ActionResult:
     Args:
         show_ids: Show IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "show",
-            show_ids,
-            lambda ids: spotify_api.remove_saved_shows(spotify_client, ids),
-            "Removed",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "show",
+        show_ids,
+        lambda ids: spotify_api.remove_saved_shows(spotify_client, ids),
+        "Removed",
+    )
 
 
 @mcp.tool(
@@ -2362,14 +2138,11 @@ def check_saved_shows(show_ids: list[str]) -> MembershipStatus:
     Returns:
         MembershipStatus.results maps each Spotify show id to true if saved
     """
-    try:
-        return _membership(
-            "show",
-            show_ids,
-            lambda ids: spotify_api.saved_shows_contains(spotify_client, ids),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _membership(
+        "show",
+        show_ids,
+        lambda ids: spotify_api.saved_shows_contains(spotify_client, ids),
+    )
 
 
 @mcp.tool(
@@ -2388,14 +2161,11 @@ def check_saved_episodes(episode_ids: list[str]) -> MembershipStatus:
     Returns:
         MembershipStatus.results maps each Spotify episode id to true if saved
     """
-    try:
-        return _membership(
-            "episode",
-            episode_ids,
-            lambda ids: spotify_api.saved_episodes_contains(spotify_client, ids),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _membership(
+        "episode",
+        episode_ids,
+        lambda ids: spotify_api.saved_episodes_contains(spotify_client, ids),
+    )
 
 
 @mcp.tool(
@@ -2417,31 +2187,23 @@ def get_show_episodes(show_id: str, limit: int = 20, offset: int = 0) -> Episode
     Returns:
         EpisodeList with 'items' and pagination info
     """
-    try:
-        limit = max(1, min(50, limit))
-        sid = to_id(show_id)
+    limit = max(1, min(50, limit))
+    sid = to_id(show_id)
 
-        logger.info(
-            f"🎙️ Getting episodes of show {sid} (limit={limit}, offset={offset})"
-        )
-        result = spotify_client.show_episodes(sid, limit=limit, offset=offset) or {}
+    result = spotify_client.show_episodes(sid, limit=limit, offset=offset) or {}
 
-        episodes = [
-            parse_episode(item, show_id=sid) for item in result.get("items", []) if item
-        ]
+    episodes = [
+        parse_episode(item, show_id=sid) for item in result.get("items", []) if item
+    ]
 
-        log_pagination_info("get_show_episodes", result.get("total", 0), limit, offset)
-
-        return EpisodeList(
-            items=episodes,
-            total=result.get("total", 0),
-            limit=result.get("limit", limit),
-            offset=result.get("offset", offset),
-            next=result.get("next"),
-            previous=result.get("previous"),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return EpisodeList(
+        items=episodes,
+        total=result.get("total", 0),
+        limit=result.get("limit", limit),
+        offset=result.get("offset", offset),
+        next=result.get("next"),
+        previous=result.get("previous"),
+    )
 
 
 @mcp.tool(
@@ -2462,33 +2224,27 @@ def get_saved_episodes(limit: int = 20, offset: int = 0) -> EpisodeList:
     Returns:
         EpisodeList with 'items' (episodes with show and added_at) and pagination info
     """
-    try:
-        limit = max(1, min(50, limit))
+    limit = max(1, min(50, limit))
 
-        logger.info(f"🎙️ Getting saved episodes (limit={limit}, offset={offset})")
-        result = (
-            spotify_client.current_user_saved_episodes(limit=limit, offset=offset) or {}
-        )
+    result = (
+        spotify_client.current_user_saved_episodes(limit=limit, offset=offset) or {}
+    )
 
-        episodes = []
-        for item in result.get("items", []):
-            if item and item.get("episode"):
-                episode = parse_episode(item["episode"])
-                episode.added_at = item.get("added_at")
-                episodes.append(episode)
+    episodes = []
+    for item in result.get("items", []):
+        if item and item.get("episode"):
+            episode = parse_episode(item["episode"])
+            episode.added_at = item.get("added_at")
+            episodes.append(episode)
 
-        log_pagination_info("get_saved_episodes", result.get("total", 0), limit, offset)
-
-        return EpisodeList(
-            items=episodes,
-            total=result.get("total", 0),
-            limit=result.get("limit", limit),
-            offset=result.get("offset", offset),
-            next=result.get("next"),
-            previous=result.get("previous"),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return EpisodeList(
+        items=episodes,
+        total=result.get("total", 0),
+        limit=result.get("limit", limit),
+        offset=result.get("offset", offset),
+        next=result.get("next"),
+        previous=result.get("previous"),
+    )
 
 
 @mcp.tool(
@@ -2508,15 +2264,12 @@ def save_episodes(episode_ids: list[str]) -> ActionResult:
     Args:
         episode_ids: Episode IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "episode",
-            episode_ids,
-            lambda ids: spotify_api.save_episodes(spotify_client, ids),
-            "Saved",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "episode",
+        episode_ids,
+        lambda ids: spotify_api.save_episodes(spotify_client, ids),
+        "Saved",
+    )
 
 
 @mcp.tool(
@@ -2536,15 +2289,12 @@ def remove_saved_episodes(episode_ids: list[str]) -> ActionResult:
     Args:
         episode_ids: Episode IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "episode",
-            episode_ids,
-            lambda ids: spotify_api.remove_saved_episodes(spotify_client, ids),
-            "Removed",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "episode",
+        episode_ids,
+        lambda ids: spotify_api.remove_saved_episodes(spotify_client, ids),
+        "Removed",
+    )
 
 
 @mcp.tool(
@@ -2565,41 +2315,33 @@ def get_saved_audiobooks(limit: int = 20, offset: int = 0) -> SavedAudiobooks:
     Returns:
         SavedAudiobooks with 'items' and pagination info
     """
-    try:
-        limit = max(1, min(50, limit))
+    limit = max(1, min(50, limit))
 
-        logger.info(f"📖 Getting saved audiobooks (limit={limit}, offset={offset})")
-        result = spotify_client._get("me/audiobooks", limit=limit, offset=offset) or {}
+    result = spotify_client._get("me/audiobooks", limit=limit, offset=offset) or {}
 
-        books = []
-        for item in result.get("items", []):
-            if not item:
-                continue
-            # The reference documents bare audiobook objects here, while the other
-            # saved-item lists wrap theirs with added_at. Accept either shape.
-            if isinstance(item.get("audiobook"), dict):
-                book = parse_audiobook(item["audiobook"])
-                book.added_at = item.get("added_at")
-            elif item.get("id"):
-                book = parse_audiobook(item)
-            else:
-                continue
-            books.append(book)
+    books = []
+    for item in result.get("items", []):
+        if not item:
+            continue
+        # The reference documents bare audiobook objects here, while the other
+        # saved-item lists wrap theirs with added_at. Accept either shape.
+        if isinstance(item.get("audiobook"), dict):
+            book = parse_audiobook(item["audiobook"])
+            book.added_at = item.get("added_at")
+        elif item.get("id"):
+            book = parse_audiobook(item)
+        else:
+            continue
+        books.append(book)
 
-        log_pagination_info(
-            "get_saved_audiobooks", result.get("total", 0), limit, offset
-        )
-
-        return SavedAudiobooks(
-            items=books,
-            total=result.get("total", 0),
-            limit=result.get("limit", limit),
-            offset=result.get("offset", offset),
-            next=result.get("next"),
-            previous=result.get("previous"),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return SavedAudiobooks(
+        items=books,
+        total=result.get("total", 0),
+        limit=result.get("limit", limit),
+        offset=result.get("offset", offset),
+        next=result.get("next"),
+        previous=result.get("previous"),
+    )
 
 
 @mcp.tool(
@@ -2618,14 +2360,11 @@ def check_saved_audiobooks(audiobook_ids: list[str]) -> MembershipStatus:
     Returns:
         MembershipStatus.results maps each Spotify audiobook id to true if saved
     """
-    try:
-        return _membership(
-            "audiobook",
-            audiobook_ids,
-            lambda ids: spotify_api.saved_audiobooks_contains(spotify_client, ids),
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _membership(
+        "audiobook",
+        audiobook_ids,
+        lambda ids: spotify_api.saved_audiobooks_contains(spotify_client, ids),
+    )
 
 
 @mcp.tool(
@@ -2645,15 +2384,12 @@ def save_audiobooks(audiobook_ids: list[str]) -> ActionResult:
     Args:
         audiobook_ids: Audiobook IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "audiobook",
-            audiobook_ids,
-            lambda ids: spotify_api.save_audiobooks(spotify_client, ids),
-            "Saved",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "audiobook",
+        audiobook_ids,
+        lambda ids: spotify_api.save_audiobooks(spotify_client, ids),
+        "Saved",
+    )
 
 
 @mcp.tool(
@@ -2673,15 +2409,12 @@ def remove_saved_audiobooks(audiobook_ids: list[str]) -> ActionResult:
     Args:
         audiobook_ids: Audiobook IDs or URIs (up to 50)
     """
-    try:
-        return _library_write(
-            "audiobook",
-            audiobook_ids,
-            lambda ids: spotify_api.remove_saved_audiobooks(spotify_client, ids),
-            "Removed",
-        )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return _library_write(
+        "audiobook",
+        audiobook_ids,
+        lambda ids: spotify_api.remove_saved_audiobooks(spotify_client, ids),
+        "Removed",
+    )
 
 
 @mcp.tool(
@@ -2701,22 +2434,18 @@ def get_recently_played(limit: int = 20) -> RecentlyPlayed:
     Returns:
         RecentlyPlayed with each track's played_at timestamp
     """
-    try:
-        limit = max(1, min(50, limit))
+    limit = max(1, min(50, limit))
 
-        logger.info(f"🕒 Getting recently played (limit={limit})")
-        result = spotify_client.current_user_recently_played(limit=limit) or {}
+    result = spotify_client.current_user_recently_played(limit=limit) or {}
 
-        tracks = []
-        for item in result.get("items", []):
-            if item and item.get("track"):
-                track = parse_track(item["track"])
-                track.played_at = item.get("played_at")
-                tracks.append(track)
+    tracks = []
+    for item in result.get("items", []):
+        if item and item.get("track"):
+            track = parse_track(item["track"])
+            track.played_at = item.get("played_at")
+            tracks.append(track)
 
-        return RecentlyPlayed(items=tracks)
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+    return RecentlyPlayed(items=tracks)
 
 
 @mcp.tool(
@@ -2743,134 +2472,107 @@ def get_top_items(
     Returns:
         TopItems with either 'tracks' or 'artists' populated
     """
-    try:
-        if item_type not in ("tracks", "artists"):
-            raise ValueError("item_type must be 'tracks' or 'artists'")
-        if time_range not in ("short_term", "medium_term", "long_term"):
-            raise ValueError(
-                "time_range must be 'short_term', 'medium_term' or 'long_term'"
-            )
-        limit = max(1, min(50, limit))
+    if item_type not in ("tracks", "artists"):
+        raise ValueError("item_type must be 'tracks' or 'artists'")
+    if time_range not in ("short_term", "medium_term", "long_term"):
+        raise ValueError(
+            "time_range must be 'short_term', 'medium_term' or 'long_term'"
+        )
+    limit = max(1, min(50, limit))
 
-        logger.info(f"📈 Getting top {item_type} ({time_range}, limit={limit})")
-
-        if item_type == "tracks":
-            result = spotify_client.current_user_top_tracks(
-                limit=limit, time_range=time_range
-            )
-            return TopItems(
-                time_range=time_range,
-                tracks=[parse_track(t) for t in (result or {}).get("items", []) if t],
-            )
-
-        result = spotify_client.current_user_top_artists(
+    if item_type == "tracks":
+        result = spotify_client.current_user_top_tracks(
             limit=limit, time_range=time_range
         )
         return TopItems(
             time_range=time_range,
-            artists=[parse_artist(a) for a in (result or {}).get("items", []) if a],
+            tracks=[parse_track(t) for t in (result or {}).get("items", []) if t],
         )
-    except SpotifyException as e:
-        raise convert_spotify_error(e) from e
+
+    result = spotify_client.current_user_top_artists(limit=limit, time_range=time_range)
+    return TopItems(
+        time_range=time_range,
+        artists=[parse_artist(a) for a in (result or {}).get("items", []) if a],
+    )
 
 
 # === RESOURCES ===
 
 
-@mcp.resource("spotify://user/current", icons=[SPOTIFY_ICON])
-def current_user() -> str:
+def spotify_resource[F: Callable[..., BaseModel]](func: F) -> F:
+    """Report a Spotify failure as a resource read error instead of content.
+
+    MCPServer forwards a `ResourceError`'s message to the client and hides the
+    text of anything else. A 404 becomes `ResourceNotFoundError`.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args: object, **kwargs: object) -> BaseModel:
+        try:
+            return func(*args, **kwargs)
+        except SpotifyException as e:
+            message = str(convert_spotify_error(e))
+            if e.http_status == 404:
+                raise ResourceNotFoundError(message) from e
+            raise ResourceError(message) from e
+
+    return wrapper  # type: ignore[return-value]
+
+
+@mcp.resource(
+    "spotify://user/current", mime_type="application/json", icons=[SPOTIFY_ICON]
+)
+@spotify_resource
+def current_user() -> UserProfile:
     """Current user's profile."""
-    try:
-        user = spotify_client.current_user()
-        return json.dumps(
-            {
-                "id": user.get("id"),
-                "display_name": user.get("display_name"),
-                "followers": user.get("followers", {}).get("total"),
-                "country": user.get("country"),
-                "product": user.get("product"),
-            }
-        )
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    return _profile()
 
 
-@mcp.resource("spotify://playback/current", icons=[SPOTIFY_ICON])
-def current_playback_resource() -> str:
+@mcp.resource(
+    "spotify://playback/current", mime_type="application/json", icons=[SPOTIFY_ICON]
+)
+@spotify_resource
+def current_playback_resource() -> PlaybackState:
     """Current playback state."""
-    try:
-        playback = spotify_client.current_playback(additional_types=PLAYABLE_TYPES)
-        if not playback:
-            return json.dumps({"status": "no_playback"})
-
-        item = parse_track(playback["item"]) if playback.get("item") else None
-        return json.dumps(
-            {
-                "is_playing": playback.get("is_playing", False),
-                "track": {
-                    "name": item.name,
-                    "artist": item.artist,
-                    "album": item.album,
-                    "id": item.id,
-                    "type": item.type,
-                    "show": item.show,
-                }
-                if item
-                else None,
-                "device": playback.get("device", {}).get("name"),
-                "progress_ms": playback.get("progress_ms"),
-            }
-        )
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    return _playback_state()
 
 
-@mcp.resource("spotify://track/{track_id}", icons=[SPOTIFY_ICON])
-def track_resource(track_id: str) -> str:
+@mcp.resource(
+    "spotify://track/{track_id}", mime_type="application/json", icons=[SPOTIFY_ICON]
+)
+@spotify_resource
+def track_resource(track_id: str) -> Track:
     """A single track by ID."""
-    try:
-        return parse_track(spotify_client.track(track_id)).model_dump_json()
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    return parse_track(spotify_client.track(track_id))
 
 
-@mcp.resource("spotify://playlist/{playlist_id}", icons=[SPOTIFY_ICON])
-def playlist_resource(playlist_id: str) -> str:
+@mcp.resource(
+    "spotify://playlist/{playlist_id}",
+    mime_type="application/json",
+    icons=[SPOTIFY_ICON],
+)
+@spotify_resource
+def playlist_resource(playlist_id: str) -> Playlist:
     """A playlist's metadata by ID (no tracks)."""
-    try:
-        result = spotify_client.playlist(
-            playlist_id, fields="id,name,description,owner,public,tracks.total"
-        )
-        owner = result.get("owner") or {}
-        tracks = result.get("tracks") or {}
-        return Playlist(
-            name=result["name"],
-            id=result["id"],
-            owner=owner.get("display_name"),
-            description=result.get("description"),
-            total_tracks=_total_tracks(playlist_id, tracks.get("total")),
-            public=result.get("public"),
-        ).model_dump_json()
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    return _playlist_metadata(playlist_id)
 
 
-@mcp.resource("spotify://artist/{artist_id}", icons=[SPOTIFY_ICON])
-def artist_resource(artist_id: str) -> str:
+@mcp.resource(
+    "spotify://artist/{artist_id}", mime_type="application/json", icons=[SPOTIFY_ICON]
+)
+@spotify_resource
+def artist_resource(artist_id: str) -> Artist:
     """An artist by ID."""
-    try:
-        return parse_artist(spotify_client.artist(artist_id)).model_dump_json()
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    return parse_artist(spotify_client.artist(artist_id))
 
 
-@mcp.resource("spotify://album/{album_id}", icons=[SPOTIFY_ICON])
-def album_resource(album_id: str) -> str:
+@mcp.resource(
+    "spotify://album/{album_id}", mime_type="application/json", icons=[SPOTIFY_ICON]
+)
+@spotify_resource
+def album_resource(album_id: str) -> Album:
     """An album's metadata by ID (no tracks)."""
-    try:
-        return parse_album(spotify_client.album(album_id)).model_dump_json()
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    return parse_album(spotify_client.album(album_id))
 
 
 # === PROMPTS ===
@@ -2915,16 +2617,10 @@ def create_mood_playlist(mood: str, genre: str = "", decade: str = "") -> str:
     return f"""{prompt}.
 
 Workflow:
-1. Use search_music with different queries to find diverse songs
-   - For large search results, use offset parameter to get more options
-   - Example: search_music("upbeat pop", limit=20, offset=0), then use the response's offset + limit for the next offset
+1. Use search_music with different queries to find diverse songs. Page with offset,
+   advancing by the returned offset + limit (restricted apps serve at most 10 per page).
 2. Create playlist with create_playlist
-3. Add tracks with add_tracks_to_playlist (supports up to 100 tracks per call)
-
-Pagination Tips:
-- Search results are paginated (request limit=1-50; restricted apps serve at most 10)
-- For variety, try multiple search queries with different offsets
-- Large playlists: batch add tracks in groups of 50-100
+3. Add tracks with add_tracks_to_playlist (up to 100 tracks per call)
 
 Consider:
 1. Energy level for {mood} mood
@@ -2938,29 +2634,21 @@ def analyze_large_playlist(playlist_id: str, analysis_type: str = "overview") ->
     """Analyze a large playlist efficiently using pagination."""
     return f"""Analyze playlist {playlist_id} with focus on {analysis_type}.
 
-For large playlists (>100 tracks), use pagination to analyze efficiently:
-
 Step 1: Get overview
 - Use get_playlist(playlist_id) for basic info including total_tracks
-- Check total_tracks to understand playlist size
 
 Step 2: Full analysis (if needed)
-- For playlists >100 tracks, use get_playlist_tracks with pagination:
+- For playlists >100 tracks, page through get_playlist_tracks:
   - get_playlist_tracks(playlist_id, limit=100, offset=0) for first 100
   - get_playlist_tracks(playlist_id, limit=100, offset=100) for next 100
-  - Continue until you have all tracks or sufficient sample
+  - Continue until you have all tracks or a sufficient sample
 
 Step 3: Analysis
 Based on analysis_type:
 - "overview": Basic stats, genres, mood distribution
 - "detailed": Track-by-track analysis, recommendations
 - "duplicates": Find duplicate tracks across large playlist
-- "mood": Analyze mood/energy progression through playlist
-
-Pagination Benefits:
-- Memory efficient for 1000+ track playlists
-- Can stop early if sufficient data collected
-- Allows progressive analysis with user feedback"""
+- "mood": Analyze mood/energy progression through playlist"""
 
 
 @mcp.prompt(icons=[SPOTIFY_ICON])
@@ -2988,14 +2676,7 @@ Exploration Depth:
 - "medium": 5-6 search queries, a few pages each
 - "deep": 10+ search queries, explore more pages as needed
 
-Pagination Best Practices:
-- Start with limit=20 for quick overview
-- Use the returned offset + limit for the next offset to avoid skips or duplicates
-- Try different query variations rather than just advancing offset
-- Stop when you find enough quality matches
+Advance by the returned offset + limit to avoid skips or duplicates. Prefer new query
+variations over deep paging, and stop when you have enough good matches.
 
 Output: Curated list of 15-25 discovered tracks with variety"""
-
-
-if __name__ == "__main__":
-    mcp.run()

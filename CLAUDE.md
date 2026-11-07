@@ -6,7 +6,7 @@ This file provides essential guidance for working with the Spotify MCP server co
 
 ### Development
 - `uv run spotify-mcp` - Start the MCP server (local alias; the package publishes as `spotify-mcp-jamiew`, so end users run `uvx spotify-mcp-jamiew`)
-- `uv sync` - Sync dependencies 
+- `uv sync` - Sync dependencies
 - `uv run pytest` - Run all tests (must pass before commits)
 - `uv run mypy src/` - Type checking (must pass before commits)
   - Optional speedup on mypy 2.x: `uv run mypy src/ --num-workers 4` (parallel checking)
@@ -22,14 +22,11 @@ Required environment variables:
 Three-tier configuration (highest priority first):
 1. Environment variables (for production/MCP usage)
 2. `.env` file (for local development)
-3. `pyproject.toml` defaults (fallback - edit `[tool.spotify-mcp.env]` section)
+3. `pyproject.toml` defaults (source checkout only; edit the `[tool.spotify-mcp.env]` section)
 
 ### Git Workflow
-**Quality Gates**: Before any commit, ALWAYS run the same checks CI runs:
-- `uv run mypy src/` - Type checking must pass
-- `uv run pytest` - All tests must pass
-- `uv run ruff check src/ tests/` and `uv run ruff format --check src/ tests/` - Lint must pass
-- `uv run bandit -r src/` - Security lint must pass
+**Quality Gates**: Before any commit, ALWAYS run every check listed under Development
+(pytest, mypy, ruff check and format, bandit). CI runs the same set.
 
 **Commit Message Format:**
 ```
@@ -75,7 +72,7 @@ Tool names do not imply matching arguments, limits or result shapes; see the
 [README comparison](README.md#moving-between-implementations). Preserve Python's distinctive
 behavior until a deliberate consumer migration, not a wholesale rewrite.
 
-Keep `mcp[cli]>=2,<3` and the direct Pydantic runtime dependency. CLI workflows remain supported.
+Keep `mcp[cli]>=2.3,<3` and the direct Pydantic runtime dependency. CLI workflows remain supported.
 Record compatibility work under Unreleased in CHANGELOG; do not bump/publish a release unless
 requested.
 
@@ -87,18 +84,24 @@ requested.
   `Annotated[..., Resolve(fn)]` parameter. `ctx.elicit()` fails on 2026-era connections.
   A resolver's question must depend only on the tool arguments, since the call is retried.
 - **Failures the model should read must be `ToolError`s.** MCPServer replaces any other
-  exception's text with "Error executing tool <name>". Tools raise `ValueError`;
-  `log_tool_execution` re-raises it as `ModelVisibleError`. Resolvers sit outside that
-  wrapper and raise `ModelVisibleError` themselves.
+  exception's text with "Error executing tool <name>". Tools raise `ValueError` for bad
+  arguments and let `SpotifyException` propagate; `log_tool_execution` re-raises both as
+  `ModelVisibleError`. Resolvers sit outside that wrapper and raise `ModelVisibleError`
+  themselves.
+- **Resources return Pydantic models and fail with `ResourceError`.** The SDK serializes
+  the model as JSON; `spotify_resource` turns a `SpotifyException` into `ResourceError`
+  (`ResourceNotFoundError` for a 404). Never return an error as content.
 - **No `ctx.info()`/`ctx.log()`** (deprecated by SEP-2577). Use `logging`, or
   `ctx.report_progress(..., message=...)` for what the client should see.
-- **Sync tools run on a worker thread**, so they no longer block the event loop and can
-  overlap. Async tools still run on the loop; don't call blocking spotipy work from new
-  async code without `anyio.to_thread`.
+- **Sync tools run on a worker thread**, so they don't block the event loop and can
+  overlap. Prefer sync tools. Only `get_playlist_tracks` is async, for progress
+  notifications; it runs spotipy calls through `asyncio.to_thread`.
 
 ### Core Files
 - **`src/spotify_mcp/fastmcp_server.py`** - Main MCP server: tools, resources, and prompts using `@mcp.tool()`/`@mcp.resource()`/`@mcp.prompt()` decorators on an `MCPServer`, with typed Pydantic output models
-- **`src/spotify_mcp/spotify_api.py`** - OAuth client wrapper plus the Feb 2026 regime fallback; tools talk to `self.sp` directly except for the endpoints whose path differs between regimes
+- **`src/spotify_mcp/spotify_api.py`** - `create_client()` plus the Feb 2026 regime fallback; tools call the spotipy client directly except for the endpoints whose path differs between regimes
+- **`src/spotify_mcp/errors.py`** - Classifies `SpotifyException`s into model-facing messages that keep Spotify's `reason`
+- **`src/spotify_mcp/logging_utils.py`** - `log_tool_execution`, the decorator every tool wears: timing logs and error conversion
 - **`src/spotify_mcp/spotify_types.py`** - TypedDicts for the Spotify response shapes the server consumes
 - **`src/spotify_mcp/utils.py`** - Redirect-URI normalization, Spotify ID/URI coercion
 - **`scripts/spotify_api_watch.py`** - Changelog probe behind the `/spotify-api-watch` skill
@@ -111,7 +114,7 @@ requested.
 - **Pagination Support**: Handles large datasets (10k+ tracks) with `limit`/`offset` parameters
 - **OAuth Flow**: Automatic token management via spotipy
 - **Type Safety**: Full Pydantic validation and MyPy compliance
-- **Performance Logging**: Comprehensive timing and debug logging for tools and API calls
+- **Logging**: One completion line per tool call, with timing, on stderr; the SDK logs failures
 
 ## Development Guidelines
 
@@ -123,7 +126,7 @@ requested.
 
 ### Code Quality Standards
 - Run the quality gates above before every commit
-- Convert Spotify exceptions to MCP-compliant errors, and never drop Spotify's `reason`
+- Let `SpotifyException` reach `log_tool_execution` rather than catching it per tool, and never drop Spotify's `reason`
 - Include Args/Returns in all tool docstrings
 
 ### New tools need annotations
@@ -188,8 +191,8 @@ Search retries an oversized page at 10 only for an invalid-limit response. Batch
 fall back to individual requests on 403. Both cache only successful fallbacks. Spotipy prefixes
 error messages with the request URL: do not mistake its `limit=` parameter for a limit error.
 Artist top tracks and playlist counts are optional enrichment on 403, not on authentication
-or rate-limit failures. `control_playback` is async; confirmation is best effort and returns
-the last observation if a later read fails.
+or rate-limit failures. Spotify applies player commands asynchronously, so `control_playback`
+confirmation is best effort and returns the last observation if a later read fails.
 
 Fields the restricted regime strips (`followers`, `popularity`, `email`, `country`, `product`)
 are optional on every Pydantic model — keep them that way, and never make a

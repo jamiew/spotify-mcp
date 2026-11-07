@@ -12,6 +12,24 @@
 - Sync tools run on a worker thread instead of blocking the event loop.
 - Progress messages replace the deprecated `ctx.info()` log notifications while paging
   playlists.
+- Resources return `application/json`, and a Spotify failure now fails the read with an error
+  (not found for a 404) instead of returning `{"error": ...}` as content.
+  `spotify://user/current` uses the `get_me` shape, which adds `email`.
+  `spotify://playback/current` uses the `get_playback_state` shape: nothing playing reads as
+  `is_playing: false` instead of `{"status": "no_playback"}`.
+- `get_playlist_tracks` no longer stops early when Spotify returns a short page that still
+  has a `next` link.
+- `control_playback`, `remove_tracks_from_playlist` and the Spotify calls in
+  `get_playlist_tracks` run on a worker thread, so they no longer block the event loop.
+- A 404 from a playlist's tracks route is reported as a missing playlist, not a missing track.
+- Logs are quieter: one line with timing per successful tool call, instead of several per
+  call. The SDK logs failures.
+- `control_playback` and `remove_tracks_from_playlist` are plain functions again, so direct
+  Python callers no longer await them. MCP clients are unchanged.
+- The Docker image installs the locked dependency versions from `uv.lock`, using a pinned uv
+  in the build stage only.
+- CI tests Python 3.12, 3.13 and 3.14. The 3.13 job had been running 3.12, because
+  `.python-version` took precedence over `setup-python`.
 
 ## 2026-11-01 — 0.8.1
 - `save_audiobooks`, `remove_saved_audiobooks` and `check_saved_audiobooks` failed every

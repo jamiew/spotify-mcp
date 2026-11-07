@@ -70,30 +70,6 @@ SAMPLE_SEARCH_RESULTS = {
         "next": None,
         "previous": None,
     },
-    "albums": {
-        "items": [],
-        "total": 0,
-        "limit": 10,
-        "offset": 0,
-        "next": None,
-        "previous": None,
-    },
-    "artists": {
-        "items": [],
-        "total": 0,
-        "limit": 10,
-        "offset": 0,
-        "next": None,
-        "previous": None,
-    },
-    "playlists": {
-        "items": [],
-        "total": 0,
-        "limit": 10,
-        "offset": 0,
-        "next": None,
-        "previous": None,
-    },
 }
 
 
@@ -131,11 +107,8 @@ def mock_spotify_client():
     # Mock common methods
     mock_client.current_playback.return_value = SAMPLE_PLAYBACK_STATE
     mock_client.search.return_value = SAMPLE_SEARCH_RESULTS
-    mock_client.user_playlists.return_value = {"items": [SAMPLE_PLAYLIST]}
     mock_client.playlist.return_value = SAMPLE_PLAYLIST
     mock_client.track.return_value = SAMPLE_TRACK
-    mock_client.playlist_add_items.return_value = {"snapshot_id": "test123"}
-    mock_client.user_playlist_create.return_value = SAMPLE_PLAYLIST
 
     return mock_client
 
