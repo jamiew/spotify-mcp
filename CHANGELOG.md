@@ -8,6 +8,9 @@
   piles up in memory. Omitting `limit` used to read up to about 10,000 tracks; it now
   stops at 1000. Results add `next_offset` (pass it back as `offset`, null at the end) and
   `truncated` (true when the cap cut the read short).
+- A source checkout no longer fills missing credentials with placeholder values from
+  `pyproject.toml`. Missing credentials now fail at startup with spotipy's "No client_id"
+  error instead of a confusing OAuth failure later.
 
 ## 2026-11-07 — 0.9.0
 - Move to MCP Python SDK v2 (`mcp[cli]>=2.3,<3`, Pydantic 2.12+). Clients on the new

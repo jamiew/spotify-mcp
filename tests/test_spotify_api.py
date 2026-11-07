@@ -42,30 +42,16 @@ class TestLoadConfig:
         assert config["REDIRECT_URI"] == "env_redirect_uri"
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("os.getenv", return_value=None)
-    def test_load_config_falls_back_to_pyproject(self, mock_getenv):
-        mock_toml_data = {
-            "tool": {
-                "spotify-mcp": {
-                    "env": {
-                        "SPOTIFY_CLIENT_ID": "pyproject_client_id",
-                        "SPOTIFY_CLIENT_SECRET": "pyproject_client_secret",
-                        "SPOTIFY_REDIRECT_URI": "pyproject_redirect_uri",
-                    }
-                }
-            }
+    @patch("spotify_mcp.spotify_api.load_dotenv")
+    def test_missing_credentials_stay_missing(self, _load_dotenv):
+        # A source checkout once filled gaps with placeholder strings from
+        # pyproject.toml, which hid the missing-credentials error behind an
+        # OAuth failure. Nothing fills them now.
+        assert load_config() == {
+            "CLIENT_ID": None,
+            "CLIENT_SECRET": None,
+            "REDIRECT_URI": None,
         }
-
-        with (
-            patch("builtins.open", create=True),
-            patch("tomllib.load", return_value=mock_toml_data),
-            patch("pathlib.Path.exists", return_value=True),
-        ):
-            config = load_config()
-
-            assert config["CLIENT_ID"] == "pyproject_client_id"
-            assert config["CLIENT_SECRET"] == "pyproject_client_secret"
-            assert config["REDIRECT_URI"] == "pyproject_redirect_uri"
 
 
 class TestCreateClient:

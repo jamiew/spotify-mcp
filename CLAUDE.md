@@ -20,10 +20,8 @@ Required environment variables:
 - `SPOTIFY_CLIENT_SECRET` - Spotify API Client Secret
 - `SPOTIFY_REDIRECT_URI` - OAuth redirect URI registered in the Spotify app (`http://127.0.0.1:8888`)
 
-Three-tier configuration (highest priority first):
-1. Environment variables (for production/MCP usage)
-2. `.env` file (for local development)
-3. `pyproject.toml` defaults (source checkout only; edit the `[tool.spotify-mcp.env]` section)
+Configuration comes from environment variables first, then a `.env` file for local
+development. Missing credentials fail at startup with spotipy's "No client_id" error.
 
 ### Git Workflow
 **Quality Gates**: Before any commit, ALWAYS run every check listed under Development

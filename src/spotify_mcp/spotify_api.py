@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-import tomllib
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import spotipy
@@ -19,31 +17,16 @@ if TYPE_CHECKING:
 
 
 def load_config() -> dict[str, str | None]:
-    """Load configuration with precedence: env vars > .env file > pyproject.toml defaults."""
-    # First try environment variables and .env file
+    """Load configuration from environment variables, then a .env file."""
     load_dotenv()
 
-    config = {
+    return {
         "CLIENT_ID": os.getenv("SPOTIFY_CLIENT_ID"),
         "CLIENT_SECRET": os.getenv("SPOTIFY_CLIENT_SECRET"),
         "REDIRECT_URI": os.getenv("SPOTIFY_REDIRECT_URI"),
     }
 
-    # Only a source checkout has pyproject.toml beside the package.
-    if not all(config.values()):
-        try:
-            with open(Path(__file__).parents[2] / "pyproject.toml", "rb") as f:
-                tool = tomllib.load(f).get("tool", {})
-        except (OSError, tomllib.TOMLDecodeError):
-            tool = {}
-        defaults = tool.get("spotify-mcp", {}).get("env", {})
-        for key in config:
-            config[key] = config[key] or defaults.get(f"SPOTIFY_{key}")
 
-    return config
-
-
-# Load configuration using the hierarchical approach
 config = load_config()
 CLIENT_ID = config["CLIENT_ID"]
 CLIENT_SECRET = config["CLIENT_SECRET"]

@@ -70,13 +70,6 @@ env = [
     "SPOTIFY_REDIRECT_URI=http://localhost:8888",
 ]
 
-# Default environment variables for development
-# These are used when no environment variables or .env file is present
-[tool.spotify-mcp.env]
-SPOTIFY_CLIENT_ID = "your_spotify_client_id_here"
-SPOTIFY_CLIENT_SECRET = "your_spotify_client_secret_here"
-SPOTIFY_REDIRECT_URI = "http://localhost:8888"
-
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true
