@@ -19,7 +19,7 @@ from mcp.server.mcpserver import (
 )
 from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError
 from mcp.types import Icon, ToolAnnotations
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from spotipy import SpotifyException
 
 import spotify_mcp.spotify_api as spotify_api
@@ -41,6 +41,9 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+# Schema bound for every offset parameter: a negative one is never valid.
+Offset = Annotated[int, Field(ge=0)]
 
 # Guidance that applies to the whole surface lives here rather than in every tool
 # description — it ships once per session instead of being repeated per tool.
@@ -932,7 +935,7 @@ def search_music(
     query: str,
     qtype: str = "track",
     limit: int = 10,
-    offset: int = 0,
+    offset: Offset = 0,
     year: str | None = None,
     year_range: str | None = None,
     genre: str | None = None,
@@ -1240,7 +1243,7 @@ def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> ActionRes
     ),
 )
 @log_tool_execution
-def list_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
+def list_playlists(limit: int = 20, offset: Offset = 0) -> PlaylistList:
     """Get the current user's playlists.
 
     limit is 1-50 per page; page with offset.
@@ -1286,8 +1289,8 @@ def list_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
 @log_tool_execution
 async def get_playlist_tracks(
     playlist_id: str,
-    limit: int | None = None,
-    offset: int = 0,
+    limit: Annotated[int | None, Field(ge=1)] = None,
+    offset: Offset = 0,
     ctx: Context | None = None,
 ) -> PlaylistTracks:
     """Get a range of a playlist's tracks, up to 1000 per call.
@@ -1543,7 +1546,7 @@ def get_album(album_ids: str | list[str]) -> AlbumInfo:
     ),
 )
 @log_tool_execution
-def get_saved_tracks(limit: int = 20, offset: int = 0) -> SavedTracks:
+def get_saved_tracks(limit: int = 20, offset: Offset = 0) -> SavedTracks:
     """Get the user's Liked Songs, with added_at.
 
     limit is 1-50 per page; page with offset.
@@ -1722,7 +1725,7 @@ def check_following_artists(artist_ids: list[str]) -> MembershipStatus:
     ),
 )
 @log_tool_execution
-def get_saved_albums(limit: int = 20, offset: int = 0) -> SavedAlbums:
+def get_saved_albums(limit: int = 20, offset: Offset = 0) -> SavedAlbums:
     """Get albums saved in the user's library, with added_at.
 
     limit is 1-50 per page; page with offset.
@@ -1923,7 +1926,7 @@ def unfollow_playlist(playlist_id: str) -> ActionResult:
     ),
 )
 @log_tool_execution
-def get_saved_shows(limit: int = 20, offset: int = 0) -> SavedShows:
+def get_saved_shows(limit: int = 20, offset: Offset = 0) -> SavedShows:
     """Get podcast shows saved in the user's library.
 
     limit is 1-50 per page; page with offset.
@@ -2048,7 +2051,7 @@ def check_saved_episodes(episode_ids: list[str]) -> MembershipStatus:
     ),
 )
 @log_tool_execution
-def get_show_episodes(show_id: str, limit: int = 20, offset: int = 0) -> EpisodeList:
+def get_show_episodes(show_id: str, limit: int = 20, offset: Offset = 0) -> EpisodeList:
     """Get a podcast show's episodes, with the user's resume point for each.
 
     limit is 1-50 per page; page with offset.
@@ -2079,7 +2082,7 @@ def get_show_episodes(show_id: str, limit: int = 20, offset: int = 0) -> Episode
     ),
 )
 @log_tool_execution
-def get_saved_episodes(limit: int = 20, offset: int = 0) -> EpisodeList:
+def get_saved_episodes(limit: int = 20, offset: Offset = 0) -> EpisodeList:
     """Get podcast episodes saved in the user's library.
 
     limit is 1-50 per page; page with offset.
@@ -2162,7 +2165,7 @@ def remove_saved_episodes(episode_ids: list[str]) -> ActionResult:
     ),
 )
 @log_tool_execution
-def get_saved_audiobooks(limit: int = 20, offset: int = 0) -> SavedAudiobooks:
+def get_saved_audiobooks(limit: int = 20, offset: Offset = 0) -> SavedAudiobooks:
     """Get audiobooks saved in the user's library.
 
     limit is 1-50 per page; page with offset.

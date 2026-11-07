@@ -1230,21 +1230,6 @@ class TestGetPlaylistTracks:
             additional_types="track,episode",
         )
 
-    async def test_zero_limit_returns_no_tracks(
-        self, mock_spotify_api, sample_track_data
-    ):
-        mock_spotify_api.playlist.return_value = {"tracks": {"total": 20}}
-        mock_spotify_api._get.return_value = {
-            "items": [{"item": sample_track_data}],
-            "next": None,
-        }
-
-        result = await get_playlist_tracks("pl1", limit=0)
-
-        assert result.items == []
-        assert result.total == 20
-        mock_spotify_api._get.assert_not_called()
-
     async def test_stripped_metadata_uses_items_total_not_page_length(
         self, mock_spotify_api, sample_track_data
     ):

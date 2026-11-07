@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-07 — 0.9.2
+- `get_playlist_tracks` rejects `limit` below 1 before calling Spotify. A zero or negative
+  limit read nothing but returned the same `next_offset`, so a client following it looped
+  forever.
+- Every `offset` parameter rejects negative values in its schema instead of passing them
+  to Spotify.
+
 ## 2026-11-07 — 0.9.1
 - The tool list is about a third smaller (127k to 87k JSON characters). Only the server
   carries the Spotify icon now, not every tool, resource and prompt. Tool descriptions no

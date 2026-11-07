@@ -182,3 +182,27 @@ async def test_large_playlist_reads_report_progress(
 
     assert result.structured_content["returned"] == 2
     assert [(progress, total) for progress, total, _ in updates] == [(2, 2)]
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("get_playlist_tracks", {"playlist_id": "pl1", "limit": 0}),
+        ("get_playlist_tracks", {"playlist_id": "pl1", "limit": -1}),
+        ("get_playlist_tracks", {"playlist_id": "pl1", "offset": -1}),
+        ("get_saved_tracks", {"offset": -1}),
+        ("search_music", {"query": "x", "offset": -1}),
+    ],
+)
+async def test_reads_reject_ranges_that_never_advance(
+    mode, mock_spotify_api, tool, args
+):
+    # get_playlist_tracks with limit<=0 read nothing yet returned next_offset ==
+    # offset, so a client following next_offset looped forever.
+    mock_spotify_api.playlist.return_value = {"tracks": {"total": 5}}
+    mock_spotify_api._get.return_value = {"items": [], "next": None}
+    async with _client(mode) as client:
+        result = await client.call_tool(tool, args)
+
+    assert result.is_error
+    assert mock_spotify_api.mock_calls == []
