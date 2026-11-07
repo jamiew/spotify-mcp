@@ -6,6 +6,7 @@ This file provides essential guidance for working with the Spotify MCP server co
 
 ### Development
 - `uv run spotify-mcp` - Start the MCP server (local alias; the package publishes as `spotify-mcp-jamiew`, so end users run `uvx spotify-mcp-jamiew`)
+- `.mcp.json` is the headless dev entry (`claude -p --mcp-config .mcp.json --strict-mcp-config`); `tests/test_integration.py` launches it as configured on both protocol eras
 - `uv sync` - Sync dependencies
 - `uv run pytest` - Run all tests (must pass before commits)
 - `uv run mypy src/` - Type checking (must pass before commits)
