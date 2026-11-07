@@ -74,8 +74,8 @@ check_following_artists) accept 50 items or 20 albums. Requests use chunks of at
 cursor, not offset.
 """
 
-# Shared Spotify glyph (inline data URI) attached to the server, tools, resources
-# and prompts.
+# Spotify glyph (inline data URI). Only the server carries it: repeating it on every
+# tool, resource and prompt made up over a quarter of the tools/list payload.
 SPOTIFY_ICON = Icon(
     src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTIiIGZpbGw9IiMxREI5NTQiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTcgMTYuNmEuNy43IDAgMCAxLTEgLjI1Yy0yLjctMS42NS02LjEtMi0xMC4xLTEuMWEuNzUuNzUgMCAxIDEtLjMzLTEuNDZjNC40LTEgOC4yLS42IDExLjIgMS4yNS4zNS4yLjQ2LjY2LjIzIDEuMDZ6bTEuMy0yLjk1YS45NC45NCAwIDAgMS0xLjI5LjNjLTMuMS0xLjktNy44LTIuNDYtMTEuNDUtMS4zNWEuOTQuOTQgMCAxIDEtLjU1LTEuOGM0LjE4LTEuMjcgOS4zNi0uNjUgMTIuOTMgMS41NS40NC4yNy41OC44NS4zNiAxLjN6bS4xLTMuMDdDMTQuNyA4LjQgOC45IDguMiA1LjQzIDkuMjZhMS4xMiAxLjEyIDAgMSAxLS42NS0yLjE1QzguNzYgNS45IDE1LjE4IDYuMTMgMTkuNDUgOC42NmExLjEyIDEuMTIgMCAxIDEtMS4xNSAxLjkyeiIvPjwvc3ZnPg==",
     mime_type="image/svg+xml",
@@ -671,15 +671,13 @@ def _profile() -> UserProfile:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_me() -> UserProfile:
     """Get the signed-in user's Spotify profile.
 
-    Returns:
-        UserProfile. email/country/product are unavailable on newer Spotify apps
-        and come back empty rather than erroring.
+    email, country and product come back empty on newer Spotify apps rather than
+    erroring.
     """
     return _profile()
 
@@ -779,15 +777,10 @@ def _playback_state() -> PlaybackState:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_playback_state() -> PlaybackState:
-    """Get the current playback state: track, device, progress, shuffle and repeat.
-
-    Returns:
-        PlaybackState (is_playing is False when nothing is playing)
-    """
+    """Get the current playback state: track, device, progress, shuffle and repeat."""
     return _playback_state()
 
 
@@ -799,7 +792,6 @@ def get_playback_state() -> PlaybackState:
         idempotent_hint=False,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def control_playback(
@@ -819,17 +811,15 @@ def control_playback(
             context_uri is set). Bare IDs are tracks; pass spotify:episode: URIs
             or episode share URLs for podcast episodes.
         context_uri: Album, playlist, artist or show URI to play (action='play')
-        position_ms: Position in milliseconds (required for action='seek')
-        volume_percent: Volume 0-100 (required for action='volume')
+        position_ms: Required for action='seek'
+        volume_percent: 0-100, required for action='volume'
         state: 'on'/'off' for shuffle; 'track'/'context'/'off' for repeat
-        device_id: Target device (default: the currently active one)
+        device_id: Defaults to the active device
 
-    Returns:
-        Last observed PlaybackState, possibly unconfirmed.
-
-    Confirmation is best effort: at most five post-action reads with brief waits.
-    Stale state or a later read failure returns the last observation. Checks do not
-    verify every requested track, context or device transition.
+    Returns the last observed state. Confirmation is best effort: at most five
+    post-action reads with brief waits. Stale state or a later read failure returns
+    the last observation. Checks do not verify every requested track, context or
+    device transition.
     """
     # Only the outgoing optional identity is needed; local tracks may have no
     # catalog id and must not be validated as a Track before issuing the action.
@@ -890,14 +880,12 @@ def control_playback(
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def list_devices() -> DeviceList:
     """List the user's available Spotify devices.
 
-    Returns:
-        DeviceList; use transfer_playback with a device id to make one active
+    Pass a device id to transfer_playback to make it active.
     """
     result = spotify_client.devices() or {}
     return DeviceList(
@@ -922,15 +910,12 @@ def list_devices() -> DeviceList:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def transfer_playback(device_id: str, play: bool = True) -> ActionResult:
     """Move playback to a different device (see list_devices).
 
-    Args:
-        device_id: Target device ID
-        play: Start playing after the transfer (default True)
+    play=False transfers without starting playback.
     """
     spotify_client.transfer_playback(device_id, force_play=play)
     return ActionResult(status="success", message="Playback transferred")
@@ -941,7 +926,6 @@ def transfer_playback(device_id: str, play: bool = True) -> ActionResult:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def search_music(
@@ -958,24 +942,15 @@ def search_music(
     """Search Spotify for tracks, albums, artists, or playlists.
 
     Args:
-        query: Search query
-        qtype: Type ('track', 'album', 'artist', 'playlist')
-        limit: Max results per page (1-50, default 10). Spotify caps search at 10
-            per page for restricted apps and rejects anything larger; a larger
-            limit is retried at the cap rather than failing. Check the returned
-            `limit` for what was actually served, and use `offset` to go deeper.
-        offset: Number of results to skip for pagination (default 0)
-        year: Filter by year (e.g., '2024')
-        year_range: Filter by year range (e.g., '2020-2024')
-        genre: Filter by genre (e.g., 'electronic', 'hip-hop')
-        artist: Filter by artist name
-        album: Filter by album name
+        qtype: 'track', 'album', 'artist' or 'playlist'
+        limit: Results per page, 1-50. Restricted apps are capped at 10 per page;
+            a larger limit is retried at the cap. The returned `limit` is what was
+            served; use `offset` to go deeper.
+        year: A year ('2024'); year_range takes a span ('2020-2024')
+        genre: Genre filter (e.g. 'electronic')
 
-    Returns:
-        SearchResults with 'items' (list of tracks) and pagination info ('total', 'limit', 'offset')
-
-    Note: Filters use Spotify's search syntax. For large result sets, use offset to paginate.
-    Example: query='love', year='2024', genre='pop' searches for 'love year:2024 genre:pop'
+    year, year_range, genre, artist and album become Spotify search filters:
+    query='love', year='2024', genre='pop' searches 'love year:2024 genre:pop'.
     """
     # Other types (show, episode, audiobook) come back in shapes this tool's
     # Track items can't describe, so refuse them instead of returning junk.
@@ -1046,7 +1021,6 @@ def search_music(
         idempotent_hint=False,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def add_to_queue(track_id: str) -> ActionResult:
@@ -1055,8 +1029,6 @@ def add_to_queue(track_id: str) -> ActionResult:
     Args:
         track_id: Track ID, or a spotify:track:/spotify:episode: URI or
             open.spotify.com URL. A bare ID is taken as a track.
-    Returns:
-        Status and message
     """
     # Not string formatting: a URI or share URL would otherwise be pasted
     # into `spotify:track:` a second time, and an episode would become a track.
@@ -1071,14 +1043,10 @@ def add_to_queue(track_id: str) -> ActionResult:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_queue() -> QueueState:
-    """Get the current playback queue.
-    Returns:
-        Currently playing track and queue of upcoming tracks
-    """
+    """Get the currently playing item and the upcoming queue."""
     result = spotify_client.queue()
 
     queue_tracks = []
@@ -1098,23 +1066,13 @@ def get_queue() -> QueueState:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_tracks(track_ids: str | list[str]) -> TrackList:
-    """Get detailed information about one or more Spotify tracks.
+    """Get one or more Spotify tracks (up to 50 IDs) in one request.
 
-    Args:
-        track_ids: Single track ID or list of track IDs (up to 50)
-
-    Returns:
-        TrackList with 'tracks' containing track metadata including release_date.
-        For single ID, returns {'tracks': [track]}.
-
-    Note: Batch lookup is much more efficient where it is available - 50 tracks
-    in 1 API call instead of 50. Spotify withholds the batch endpoint from some
-    apps, in which case this transparently falls back to one request per track,
-    so the result is the same either way.
+    Where Spotify withholds the batch endpoint from an app, this falls back to one
+    request per track with the same result.
     """
     # Normalize to list
     ids = [track_ids] if isinstance(track_ids, str) else track_ids
@@ -1153,19 +1111,17 @@ def _artist_top_tracks_or_empty(artist_id: str) -> dict:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_artist(artist_ids: str | list[str]) -> ArtistInfo:
     """Get details for one or more Spotify artists, batched into a single request.
 
     Args:
-        artist_ids: One artist ID/URI, or a list of up to 50. A list costs one
-            Spotify request rather than one per artist.
-    Returns:
-        ArtistInfo whose `artists` follows the order requested. `top_tracks` is
-        filled only when a single artist was requested, and is empty rather than
-        an error when Spotify withholds that endpoint.
+        artist_ids: One artist ID/URI, or a list of up to 50
+
+    `artists` follows the requested order. `top_tracks` is filled only when a single
+    artist was requested, and is empty rather than an error when Spotify withholds
+    that endpoint.
     """
     ids = [artist_ids] if isinstance(artist_ids, str) else list(artist_ids)
     _check_batch("artist", ids)
@@ -1216,18 +1172,10 @@ def _playlist_metadata(playlist_id: str) -> Playlist:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_playlist(playlist_id: str) -> Playlist:
-    """Get a playlist's metadata. Use get_playlist_tracks for its tracks.
-
-    Args:
-        playlist_id: Spotify playlist ID
-
-    Returns:
-        Playlist metadata with total_tracks and no track list
-    """
+    """Get a playlist's metadata and total_tracks; get_playlist_tracks reads tracks."""
     return _playlist_metadata(playlist_id)
 
 
@@ -1239,20 +1187,10 @@ def get_playlist(playlist_id: str) -> Playlist:
         idempotent_hint=False,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def create_playlist(name: str, description: str = "", public: bool = False) -> Playlist:
-    """Create a new Spotify playlist.
-
-    Args:
-        name: Playlist name
-        description: Playlist description (default: empty)
-        public: Whether playlist is public (default: False)
-
-    Returns:
-        The created Playlist
-    """
+    """Create a new Spotify playlist. It is private unless public=True."""
     result = spotify_api.create_playlist(spotify_client, name, description, public)
 
     playlist = Playlist(
@@ -1276,14 +1214,12 @@ def create_playlist(name: str, description: str = "", public: bool = False) -> P
         idempotent_hint=False,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> ActionResult:
     """Add tracks or podcast episodes to a playlist.
 
     Args:
-        playlist_id: Playlist ID
         track_uris: Track or episode URIs/URLs (up to 100). Bare IDs are tracks;
             pass spotify:episode: URIs or episode URLs for episodes.
     """
@@ -1302,21 +1238,12 @@ def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> ActionRes
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def list_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
-    """Get current user's playlists with pagination support.
+    """Get the current user's playlists.
 
-    Args:
-        limit: Max playlists to return per page (1-50, default 20)
-        offset: Number of playlists to skip for pagination (default 0)
-
-    Returns:
-        PlaylistList with 'items' (list of playlists) and pagination info ('total', 'limit', 'offset')
-
-    Note: For users with many playlists, use offset to paginate through results.
-    Example: offset=0 gets playlists 1-20, offset=20 gets playlists 21-40, etc.
+    limit is 1-50 per page; page with offset.
     """
     # Validate limit (Spotify API accepts 1-50)
     limit = max(1, min(50, limit))
@@ -1355,7 +1282,6 @@ def list_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 async def get_playlist_tracks(
@@ -1447,7 +1373,6 @@ def confirm_removal(
         idempotent_hint=False,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def remove_tracks_from_playlist(
@@ -1460,7 +1385,6 @@ def remove_tracks_from_playlist(
     """Remove tracks or podcast episodes from a playlist.
 
     Args:
-        playlist_id: Playlist ID
         track_uris: Track or episode URIs/URLs to remove. Bare IDs are tracks.
     """
     uris = [to_playable_uri(uri) for uri in track_uris]
@@ -1491,7 +1415,6 @@ def remove_tracks_from_playlist(
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def update_playlist_details(
@@ -1500,14 +1423,7 @@ def update_playlist_details(
     description: str | None = None,
     public: bool | None = None,
 ) -> ActionResult:
-    """Modify playlist details.
-
-    Args:
-        playlist_id: Playlist ID
-        name: New playlist name (optional)
-        description: New playlist description (optional)
-        public: Whether playlist should be public (optional)
-    """
+    """Change a playlist's name, description or visibility; omitted fields stay."""
     if not name and not description and public is None:
         raise ValueError(
             "At least one of name, description, or public must be provided"
@@ -1530,7 +1446,6 @@ def update_playlist_details(
         idempotent_hint=False,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def reorder_playlist(
@@ -1543,18 +1458,14 @@ def reorder_playlist(
     """Move a contiguous block of tracks to a new position within a playlist.
 
     Args:
-        playlist_id: Playlist ID
         range_start: Zero-based position of the first track to move
         insert_before: Zero-based position to insert the moved block before.
             Pass the playlist's total track count to move the block to the end.
-        range_length: Number of consecutive tracks to move (default 1)
+        range_length: Number of consecutive tracks to move
         snapshot_id: Optional playlist snapshot ID to guard against concurrent edits
 
-    Returns:
-        ActionResult with the new snapshot_id
-
-    Note: Positions are zero-based. Example: move the first 3 tracks to just
-    before position 10 with range_start=0, range_length=3, insert_before=10.
+    Returns the new snapshot_id. Example: move the first 3 tracks to just before
+    position 10 with range_start=0, range_length=3, insert_before=10.
     """
     if range_start < 0 or insert_before < 0:
         raise ValueError("range_start and insert_before must be >= 0")
@@ -1584,19 +1495,16 @@ def reorder_playlist(
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_album(album_ids: str | list[str]) -> AlbumInfo:
     """Get details for one or more Spotify albums, batched into a single request.
 
     Args:
-        album_ids: One album ID/URI, or a list of up to 20 — Spotify's own cap
-            for album batches, which is lower than the 50 for tracks and artists.
+        album_ids: One album ID/URI, or a list of up to 20 (Spotify's album cap)
 
-    Returns:
-        AlbumInfo whose `albums` follows the order requested. `tracks` holds the
-        album's track list only when a single album was requested.
+    `albums` follows the requested order. `tracks` holds the album's track list only
+    when a single album was requested.
     """
     ids = [album_ids] if isinstance(album_ids, str) else list(album_ids)
     _check_batch("album", ids)
@@ -1630,18 +1538,12 @@ def get_album(album_ids: str | list[str]) -> AlbumInfo:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_saved_tracks(limit: int = 20, offset: int = 0) -> SavedTracks:
-    """Get user's saved/liked tracks (Liked Songs library).
+    """Get the user's Liked Songs, with added_at.
 
-    Args:
-        limit: Max tracks to return per page (1-50, default 20)
-        offset: Number of tracks to skip for pagination (default 0)
-
-    Returns:
-        SavedTracks with 'items' (tracks with added_at timestamp) and pagination info
+    limit is 1-50 per page; page with offset.
     """
     limit = max(1, min(50, limit))
 
@@ -1681,7 +1583,6 @@ def _library_write(
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def save_tracks(track_ids: list[str]) -> ActionResult:
@@ -1706,7 +1607,6 @@ def save_tracks(track_ids: list[str]) -> ActionResult:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def remove_saved_tracks(track_ids: list[str]) -> ActionResult:
@@ -1743,7 +1643,6 @@ def _membership(
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def check_saved_tracks(track_ids: list[str]) -> MembershipStatus:
@@ -1769,7 +1668,6 @@ def check_saved_tracks(track_ids: list[str]) -> MembershipStatus:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def check_saved_albums(album_ids: list[str]) -> MembershipStatus:
@@ -1794,7 +1692,6 @@ def check_saved_albums(album_ids: list[str]) -> MembershipStatus:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def check_following_artists(artist_ids: list[str]) -> MembershipStatus:
@@ -1820,18 +1717,12 @@ def check_following_artists(artist_ids: list[str]) -> MembershipStatus:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_saved_albums(limit: int = 20, offset: int = 0) -> SavedAlbums:
-    """Get albums saved in the user's library.
+    """Get albums saved in the user's library, with added_at.
 
-    Args:
-        limit: Max albums to return per page (1-50, default 20)
-        offset: Number of albums to skip for pagination (default 0)
-
-    Returns:
-        SavedAlbums with 'items' (albums with added_at) and pagination info
+    limit is 1-50 per page; page with offset.
     """
     limit = max(1, min(50, limit))
 
@@ -1862,7 +1753,6 @@ def get_saved_albums(limit: int = 20, offset: int = 0) -> SavedAlbums:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def save_albums(album_ids: list[str]) -> ActionResult:
@@ -1887,7 +1777,6 @@ def save_albums(album_ids: list[str]) -> ActionResult:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def remove_saved_albums(album_ids: list[str]) -> ActionResult:
@@ -1909,18 +1798,13 @@ def remove_saved_albums(album_ids: list[str]) -> ActionResult:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_followed_artists(limit: int = 20, after: str | None = None) -> FollowedArtists:
-    """Get the artists the user follows. Paged by cursor, not offset.
+    """Get the artists the user follows, 1-50 per page (limit).
 
-    Args:
-        limit: Max artists to return per page (1-50, default 20)
-        after: The `after` cursor from the previous page (omit for the first page)
-
-    Returns:
-        FollowedArtists; pass its `after` back for the next page (None on the last)
+    Paged by cursor, not offset: pass the returned `after` back for the next page.
+    It is null on the last page.
     """
     limit = max(1, min(50, limit))
 
@@ -1946,7 +1830,6 @@ def get_followed_artists(limit: int = 20, after: str | None = None) -> FollowedA
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def follow_artists(artist_ids: list[str]) -> ActionResult:
@@ -1971,7 +1854,6 @@ def follow_artists(artist_ids: list[str]) -> ActionResult:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def unfollow_artists(artist_ids: list[str]) -> ActionResult:
@@ -1996,7 +1878,6 @@ def unfollow_artists(artist_ids: list[str]) -> ActionResult:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def follow_playlist(playlist_id: str) -> ActionResult:
@@ -2017,7 +1898,6 @@ def follow_playlist(playlist_id: str) -> ActionResult:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def unfollow_playlist(playlist_id: str) -> ActionResult:
@@ -2038,18 +1918,12 @@ def unfollow_playlist(playlist_id: str) -> ActionResult:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_saved_shows(limit: int = 20, offset: int = 0) -> SavedShows:
-    """Get the podcast shows saved in the user's library.
+    """Get podcast shows saved in the user's library.
 
-    Args:
-        limit: Max shows to return per page (1-50, default 20)
-        offset: Number of shows to skip for pagination (default 0)
-
-    Returns:
-        SavedShows with 'items' (shows with added_at) and pagination info
+    limit is 1-50 per page; page with offset.
     """
     limit = max(1, min(50, limit))
 
@@ -2080,7 +1954,6 @@ def get_saved_shows(limit: int = 20, offset: int = 0) -> SavedShows:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def save_shows(show_ids: list[str]) -> ActionResult:
@@ -2105,7 +1978,6 @@ def save_shows(show_ids: list[str]) -> ActionResult:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def remove_saved_shows(show_ids: list[str]) -> ActionResult:
@@ -2127,7 +1999,6 @@ def remove_saved_shows(show_ids: list[str]) -> ActionResult:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def check_saved_shows(show_ids: list[str]) -> MembershipStatus:
@@ -2150,7 +2021,6 @@ def check_saved_shows(show_ids: list[str]) -> MembershipStatus:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def check_saved_episodes(episode_ids: list[str]) -> MembershipStatus:
@@ -2173,19 +2043,12 @@ def check_saved_episodes(episode_ids: list[str]) -> MembershipStatus:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_show_episodes(show_id: str, limit: int = 20, offset: int = 0) -> EpisodeList:
     """Get a podcast show's episodes, with the user's resume point for each.
 
-    Args:
-        show_id: Show ID, URI or open.spotify.com URL
-        limit: Max episodes to return per page (1-50, default 20)
-        offset: Number of episodes to skip for pagination (default 0)
-
-    Returns:
-        EpisodeList with 'items' and pagination info
+    limit is 1-50 per page; page with offset.
     """
     limit = max(1, min(50, limit))
     sid = to_id(show_id)
@@ -2211,18 +2074,12 @@ def get_show_episodes(show_id: str, limit: int = 20, offset: int = 0) -> Episode
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_saved_episodes(limit: int = 20, offset: int = 0) -> EpisodeList:
-    """Get the podcast episodes saved in the user's library.
+    """Get podcast episodes saved in the user's library.
 
-    Args:
-        limit: Max episodes to return per page (1-50, default 20)
-        offset: Number of episodes to skip for pagination (default 0)
-
-    Returns:
-        EpisodeList with 'items' (episodes with show and added_at) and pagination info
+    limit is 1-50 per page; page with offset.
     """
     limit = max(1, min(50, limit))
 
@@ -2255,7 +2112,6 @@ def get_saved_episodes(limit: int = 20, offset: int = 0) -> EpisodeList:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def save_episodes(episode_ids: list[str]) -> ActionResult:
@@ -2280,7 +2136,6 @@ def save_episodes(episode_ids: list[str]) -> ActionResult:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def remove_saved_episodes(episode_ids: list[str]) -> ActionResult:
@@ -2302,18 +2157,12 @@ def remove_saved_episodes(episode_ids: list[str]) -> ActionResult:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_saved_audiobooks(limit: int = 20, offset: int = 0) -> SavedAudiobooks:
-    """Get the audiobooks saved in the user's library.
+    """Get audiobooks saved in the user's library.
 
-    Args:
-        limit: Max audiobooks to return per page (1-50, default 20)
-        offset: Number of audiobooks to skip for pagination (default 0)
-
-    Returns:
-        SavedAudiobooks with 'items' and pagination info
+    limit is 1-50 per page; page with offset.
     """
     limit = max(1, min(50, limit))
 
@@ -2349,7 +2198,6 @@ def get_saved_audiobooks(limit: int = 20, offset: int = 0) -> SavedAudiobooks:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def check_saved_audiobooks(audiobook_ids: list[str]) -> MembershipStatus:
@@ -2375,7 +2223,6 @@ def check_saved_audiobooks(audiobook_ids: list[str]) -> MembershipStatus:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def save_audiobooks(audiobook_ids: list[str]) -> ActionResult:
@@ -2400,7 +2247,6 @@ def save_audiobooks(audiobook_ids: list[str]) -> ActionResult:
         idempotent_hint=True,
         open_world_hint=True,
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def remove_saved_audiobooks(audiobook_ids: list[str]) -> ActionResult:
@@ -2422,18 +2268,10 @@ def remove_saved_audiobooks(audiobook_ids: list[str]) -> ActionResult:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_recently_played(limit: int = 20) -> RecentlyPlayed:
-    """Get recently played tracks, most recent first.
-
-    Args:
-        limit: Max tracks to return (1-50, default 20)
-
-    Returns:
-        RecentlyPlayed with each track's played_at timestamp
-    """
+    """Get recently played tracks with played_at, most recent first (limit 1-50)."""
     limit = max(1, min(50, limit))
 
     result = spotify_client.current_user_recently_played(limit=limit) or {}
@@ -2453,7 +2291,6 @@ def get_recently_played(limit: int = 20) -> RecentlyPlayed:
     annotations=ToolAnnotations(
         read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
-    icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 def get_top_items(
@@ -2465,12 +2302,9 @@ def get_top_items(
     to the app. Spotify's policy also restricts analysis and AI ingestion.
 
     Args:
-        item_type: 'tracks' or 'artists' (default 'tracks')
+        item_type: 'tracks' or 'artists'
         time_range: 'short_term' (~4 weeks), 'medium_term' (~6 months) or 'long_term'
-        limit: Max items to return (1-50, default 20)
-
-    Returns:
-        TopItems with either 'tracks' or 'artists' populated
+        limit: 1-50
     """
     if item_type not in ("tracks", "artists"):
         raise ValueError("item_type must be 'tracks' or 'artists'")
@@ -2519,27 +2353,21 @@ def spotify_resource[F: Callable[..., BaseModel]](func: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
-@mcp.resource(
-    "spotify://user/current", mime_type="application/json", icons=[SPOTIFY_ICON]
-)
+@mcp.resource("spotify://user/current", mime_type="application/json")
 @spotify_resource
 def current_user() -> UserProfile:
     """Current user's profile."""
     return _profile()
 
 
-@mcp.resource(
-    "spotify://playback/current", mime_type="application/json", icons=[SPOTIFY_ICON]
-)
+@mcp.resource("spotify://playback/current", mime_type="application/json")
 @spotify_resource
 def current_playback_resource() -> PlaybackState:
     """Current playback state."""
     return _playback_state()
 
 
-@mcp.resource(
-    "spotify://track/{track_id}", mime_type="application/json", icons=[SPOTIFY_ICON]
-)
+@mcp.resource("spotify://track/{track_id}", mime_type="application/json")
 @spotify_resource
 def track_resource(track_id: str) -> Track:
     """A single track by ID."""
@@ -2549,7 +2377,6 @@ def track_resource(track_id: str) -> Track:
 @mcp.resource(
     "spotify://playlist/{playlist_id}",
     mime_type="application/json",
-    icons=[SPOTIFY_ICON],
 )
 @spotify_resource
 def playlist_resource(playlist_id: str) -> Playlist:
@@ -2557,18 +2384,14 @@ def playlist_resource(playlist_id: str) -> Playlist:
     return _playlist_metadata(playlist_id)
 
 
-@mcp.resource(
-    "spotify://artist/{artist_id}", mime_type="application/json", icons=[SPOTIFY_ICON]
-)
+@mcp.resource("spotify://artist/{artist_id}", mime_type="application/json")
 @spotify_resource
 def artist_resource(artist_id: str) -> Artist:
     """An artist by ID."""
     return parse_artist(spotify_client.artist(artist_id))
 
 
-@mcp.resource(
-    "spotify://album/{album_id}", mime_type="application/json", icons=[SPOTIFY_ICON]
-)
+@mcp.resource("spotify://album/{album_id}", mime_type="application/json")
 @spotify_resource
 def album_resource(album_id: str) -> Album:
     """An album's metadata by ID (no tracks)."""
@@ -2578,7 +2401,7 @@ def album_resource(album_id: str) -> Album:
 # === PROMPTS ===
 
 
-@mcp.prompt(icons=[SPOTIFY_ICON])
+@mcp.prompt()
 def discover_similar(artist: str) -> str:
     """Find artists similar to one you name, without a recommendations endpoint."""
     return f"""Find artists similar to {artist}.
@@ -2594,7 +2417,7 @@ Give me 8-10 artists with one line each on why, plus a representative track. The
 ask whether to save them or build a playlist."""
 
 
-@mcp.prompt(icons=[SPOTIFY_ICON])
+@mcp.prompt()
 def taste_profile(time_range: str = "medium_term") -> str:
     """Summarize listening habits from top items and recent plays."""
     return f"""Profile my listening over {time_range}.
@@ -2604,7 +2427,7 @@ the genres and moods that dominate, what has changed lately versus the longer ra
 and two or three blind spots worth exploring. Be specific and skip the flattery."""
 
 
-@mcp.prompt(icons=[SPOTIFY_ICON])
+@mcp.prompt()
 def create_mood_playlist(mood: str, genre: str = "", decade: str = "") -> str:
     """Create a playlist based on mood and preferences."""
     prompt = f"Create a Spotify playlist for a {mood} mood"
@@ -2629,7 +2452,7 @@ Consider:
 4. 15-20 songs with good flow"""
 
 
-@mcp.prompt(icons=[SPOTIFY_ICON])
+@mcp.prompt()
 def analyze_large_playlist(playlist_id: str, analysis_type: str = "overview") -> str:
     """Analyze a large playlist efficiently using pagination."""
     return f"""Analyze playlist {playlist_id} with focus on {analysis_type}.
@@ -2651,7 +2474,7 @@ Based on analysis_type:
 - "mood": Analyze mood/energy progression through playlist"""
 
 
-@mcp.prompt(icons=[SPOTIFY_ICON])
+@mcp.prompt()
 def discover_music_systematically(
     seed_query: str, exploration_depth: str = "medium"
 ) -> str:

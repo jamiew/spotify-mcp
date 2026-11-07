@@ -10,6 +10,7 @@ defect, and README drift is how people end up calling tools that don't exist.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from pathlib import Path
 
@@ -22,6 +23,11 @@ ROOT = Path(__file__).resolve().parents[1]
 # Descriptions are per-tool context the model pays for on every request.
 # Whole-surface guidance belongs in INSTRUCTIONS instead.
 MAX_DESCRIPTION_CHARS = 1200
+
+# The whole tools/list payload ships to the model every session. It measured
+# 87k JSON chars after dropping per-tool icons (127k with them); this leaves
+# about 10% headroom. Trim elsewhere, or raise it on purpose, when a change needs room.
+MAX_TOOLS_LIST_CHARS = 96_000
 
 
 @pytest.fixture(scope="module")
@@ -59,8 +65,11 @@ class TestToolAnnotations:
         ]
         assert missing == []
 
-    def test_every_tool_has_an_icon(self, tools):
-        assert [t.name for t in tools if not t.icons] == []
+    def test_tools_list_stays_within_budget(self, tools):
+        payload = json.dumps(
+            [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in tools]
+        )
+        assert len(payload) <= MAX_TOOLS_LIST_CHARS
 
     def test_descriptions_stay_within_budget(self, tools):
         too_long = [

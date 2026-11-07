@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+- The tool list is about a third smaller (127k to 87k JSON characters). Only the server
+  carries the Spotify icon now, not every tool, resource and prompt. Tool descriptions no
+  longer repeat types, defaults and return shapes that the schemas already give.
+
 ## 2026-11-07 — 0.9.0
 - Move to MCP Python SDK v2 (`mcp[cli]>=2.3,<3`, Pydantic 2.12+). Clients on the new
   2026-07-28 protocol now connect, alongside 2025-era and v1-SDK clients.

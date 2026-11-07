@@ -110,7 +110,7 @@ requested.
 ### Key Features
 - **MCP Tools**: Playback control, search, queue management, playlist operations, track/artist/album info, and library tools for liked songs, albums, followed artists, podcasts and audiobooks
 - **Structured Output**: Every tool returns a typed Pydantic model (real output schema)
-- **Tool Annotations & Icons**: read-only/destructive hints, titles, and a Spotify glyph on tools/resources/prompts
+- **Tool Annotations**: read-only/destructive hints and titles on every tool; the Spotify glyph ships once, on the server
 - **Progress & Elicitation**: progress notifications for large paginations; confirmation before destructive playlist removals via an `Elicit` resolver (when the client declares form elicitation)
 - **Pagination Support**: Handles large datasets (10k+ tracks) with `limit`/`offset` parameters
 - **OAuth Flow**: Automatic token management via spotipy
@@ -128,11 +128,13 @@ requested.
 ### Code Quality Standards
 - Run the quality gates above before every commit
 - Let `SpotifyException` reach `log_tool_execution` rather than catching it per tool, and never drop Spotify's `reason`
-- Include Args/Returns in all tool docstrings
+- Tool docstrings say what the schema can't: ranges, accepted values, behavior. Don't restate types, defaults or the output model
 
 ### New tools need annotations
-Every tool declares a title, a Spotify icon and behaviour hints; `tests/test_tool_metadata.py`
-fails without them, and also if the README tool table drifts from the code.
+Every tool declares a title and behaviour hints; `tests/test_tool_metadata.py`
+fails without them, if the README tool table drifts from the code, and if the
+tools/list payload outgrows its budget. Don't add per-tool icons: an inline icon
+on every tool was over a quarter of that payload.
 
 Get `destructiveHint` right rather than safe-by-default: clients use it to decide what to
 confirm with the user, so marking an additive tool destructive trains people to click through
