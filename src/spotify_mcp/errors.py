@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
+from mcp.server.mcpserver.exceptions import ToolError
 from spotipy import SpotifyException
 
 
@@ -252,11 +253,22 @@ def _format_error(error: SpotifyMCPError) -> str:
     return f"{msg} [{error.code.value}]"
 
 
-def convert_spotify_error(e: Exception) -> Exception:
-    """Convert Spotify exceptions to appropriate exception types for FastMCP."""
+class ModelVisibleError(ToolError, ValueError):
+    """A tool failure the model should read: bad arguments or a Spotify error.
+
+    MCPServer forwards only a `ToolError`'s text. Any other exception reaches the
+    model as a bare "Error executing tool <name>", which drops Spotify's reason.
+    It stays a ValueError, which is how every tool reports these failures.
+    """
+
+
+def convert_spotify_error(e: Exception) -> ModelVisibleError:
+    """Convert a Spotify failure into an error whose message reaches the model."""
     if isinstance(e, SpotifyException):
-        return ValueError(_format_error(SpotifyMCPError.from_spotify_exception(e)))
+        return ModelVisibleError(
+            _format_error(SpotifyMCPError.from_spotify_exception(e))
+        )
     elif isinstance(e, SpotifyMCPError):
-        return ValueError(_format_error(e))
+        return ModelVisibleError(_format_error(e))
     else:
-        return ValueError(f"Unexpected error: {str(e)}")
+        return ModelVisibleError(f"Unexpected error: {str(e)}")

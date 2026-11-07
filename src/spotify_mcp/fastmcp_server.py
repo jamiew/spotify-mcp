@@ -1,6 +1,5 @@
 """
-Modern FastMCP-based Spotify MCP Server.
-Clean, simple implementation using FastMCP's automatic features.
+Spotify MCP server, built on the MCP Python SDK's MCPServer.
 """
 
 from __future__ import annotations
@@ -8,20 +7,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, cast
+from importlib.metadata import version
+from typing import TYPE_CHECKING, Annotated, cast
 
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.types import (
-    ClientCapabilities,
-    ElicitationCapability,
-    Icon,
-    ToolAnnotations,
+from mcp.server.mcpserver import (
+    AcceptedElicitation,
+    Context,
+    Elicit,
+    ElicitationResult,
+    MCPServer,
+    Resolve,
 )
+from mcp.types import Icon, ToolAnnotations
 from pydantic import BaseModel
 from spotipy import SpotifyException
 
 import spotify_mcp.spotify_api as spotify_api
-from spotify_mcp.errors import convert_spotify_error
+from spotify_mcp.errors import ModelVisibleError, convert_spotify_error
 from spotify_mcp.logging_utils import (
     log_pagination_info,
     log_tool_execution,
@@ -87,15 +89,16 @@ cursor, not offset.
 # and prompts.
 SPOTIFY_ICON = Icon(
     src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTIiIGZpbGw9IiMxREI5NTQiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTcgMTYuNmEuNy43IDAgMCAxLTEgLjI1Yy0yLjctMS42NS02LjEtMi0xMC4xLTEuMWEuNzUuNzUgMCAxIDEtLjMzLTEuNDZjNC40LTEgOC4yLS42IDExLjIgMS4yNS4zNS4yLjQ2LjY2LjIzIDEuMDZ6bTEuMy0yLjk1YS45NC45NCAwIDAgMS0xLjI5LjNjLTMuMS0xLjktNy44LTIuNDYtMTEuNDUtMS4zNWEuOTQuOTQgMCAxIDEtLjU1LTEuOGM0LjE4LTEuMjcgOS4zNi0uNjUgMTIuOTMgMS41NS40NC4yNy41OC44NS4zNiAxLjN6bS4xLTMuMDdDMTQuNyA4LjQgOC45IDguMiA1LjQzIDkuMjZhMS4xMiAxLjEyIDAgMSAxLS42NS0yLjE1QzguNzYgNS45IDE1LjE4IDYuMTMgMTkuNDUgOC42NmExLjEyIDEuMTIgMCAxIDEtMS4xNSAxLjkyeiIvPjwvc3ZnPg==",
-    mimeType="image/svg+xml",
+    mime_type="image/svg+xml",
 )
 
-# Create FastMCP app
-mcp = FastMCP(
+mcp = MCPServer(
     "Spotify MCP",
     instructions=INSTRUCTIONS,
     website_url="https://github.com/jamiew/spotify-mcp",
     icons=[SPOTIFY_ICON],
+    # v2 reports an empty serverInfo.version unless the server supplies one.
+    version=version("spotify-mcp-jamiew"),
 )
 
 # Initialize Spotify client
@@ -586,7 +589,7 @@ async def get_playlist_tracks_paginated(
         playlist_id: Spotify playlist ID
         limit: Maximum number of tracks to return (None for all)
         offset: Number of tracks to skip
-        ctx: Optional MCP context for progress + log notifications
+        ctx: Optional MCP context for progress notifications
         total: Total track count, used as the progress denominator
 
     Returns:
@@ -630,8 +633,9 @@ async def get_playlist_tracks_paginated(
         )
 
         if ctx is not None:
-            await ctx.report_progress(progress=len(tracks), total=total)
-            await ctx.info(f"Fetched {len(tracks)} tracks so far")
+            await ctx.report_progress(
+                len(tracks), total, message=f"Fetched {len(tracks)} tracks so far"
+            )
 
         # `limit`/`offset` count playlist positions, so consume the rows the API
         # returned - never the subset we managed to parse. Counting parsed
@@ -669,7 +673,7 @@ async def get_playlist_tracks_paginated(
 @mcp.tool(
     title="Spotify Profile",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -791,7 +795,7 @@ def _playback_state() -> PlaybackState:
 @mcp.tool(
     title="Now Playing",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -812,10 +816,10 @@ def get_playback_state() -> PlaybackState:
 @mcp.tool(
     title="Control Playback",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -914,7 +918,7 @@ async def control_playback(
 @mcp.tool(
     title="Available Devices",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -947,10 +951,10 @@ def list_devices() -> DeviceList:
 @mcp.tool(
     title="Switch Device",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -973,7 +977,7 @@ def transfer_playback(device_id: str, play: bool = True) -> ActionResult:
 @mcp.tool(
     title="Search Spotify",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1085,10 +1089,10 @@ def search_music(
 @mcp.tool(
     title="Add to Queue",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1117,7 +1121,7 @@ def add_to_queue(track_id: str) -> ActionResult:
 @mcp.tool(
     title="Get Queue",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1148,7 +1152,7 @@ def get_queue() -> QueueState:
 @mcp.tool(
     title="Get Tracks",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1212,7 +1216,7 @@ def _artist_top_tracks_or_empty(artist_id: str) -> dict:
 @mcp.tool(
     title="Get Artist",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1268,7 +1272,7 @@ def _total_tracks(playlist_id: str, reported: object) -> int | None:
 @mcp.tool(
     title="Get Playlist",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1311,10 +1315,10 @@ def get_playlist(playlist_id: str) -> Playlist:
 @mcp.tool(
     title="Create Playlist",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1353,10 +1357,10 @@ def create_playlist(name: str, description: str = "", public: bool = False) -> P
 @mcp.tool(
     title="Add Tracks to Playlist",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1387,7 +1391,7 @@ def add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> ActionRes
 @mcp.tool(
     title="List My Playlists",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1446,7 +1450,7 @@ def list_playlists(limit: int = 20, offset: int = 0) -> PlaylistList:
 @mcp.tool(
     title="Get Playlist Tracks",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1507,19 +1511,61 @@ async def get_playlist_tracks(
         raise convert_spotify_error(e) from e
 
 
+def _client_can_elicit_form(ctx: Context) -> bool:
+    """Whether the client declared form elicitation.
+
+    Mirrors the SDK's resolver gate: a bare `elicitation: {}` predates modes and
+    means form support; a url-only declaration does not.
+    """
+    caps = ctx.client_capabilities
+    elicitation = caps.elicitation if caps is not None else None
+    return elicitation is not None and (
+        elicitation.form is not None or elicitation.url is None
+    )
+
+
+async def confirm_removal(
+    playlist_id: str, track_uris: list[str], ctx: Context
+) -> RemovalConfirmation | Elicit[RemovalConfirmation]:
+    """Resolver that asks the user before tracks leave a playlist.
+
+    Clients that can't render a form proceed unconfirmed, so this core op never
+    hard-fails on them. When they can, a failed prompt fails the call rather than
+    deleting. On 2026-07-28 connections the call is retried with the answer
+    attached, so the question must depend only on the arguments.
+    """
+    # Reject malformed input before bothering the user about it. Resolvers sit
+    # outside log_tool_execution, so surface the reason here.
+    try:
+        uris = [to_playable_uri(uri) for uri in track_uris]
+    except ValueError as e:
+        raise ModelVisibleError(str(e)) from e
+    if not _client_can_elicit_form(ctx):
+        return RemovalConfirmation(confirm=True)
+    return Elicit(
+        f"Remove {len(uris)} track(s) from playlist {playlist_id}? "
+        "This cannot be undone.",
+        RemovalConfirmation,
+    )
+
+
 @mcp.tool(
     title="Remove Tracks from Playlist",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=False,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=False,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
 @log_tool_execution
 async def remove_tracks_from_playlist(
-    playlist_id: str, track_uris: list[str], ctx: Context | None = None
+    playlist_id: str,
+    track_uris: list[str],
+    confirmation: Annotated[
+        ElicitationResult[RemovalConfirmation], Resolve(confirm_removal)
+    ],
 ) -> ActionResult:
     """Remove tracks or podcast episodes from a playlist.
 
@@ -1530,29 +1576,14 @@ async def remove_tracks_from_playlist(
     try:
         uris = [to_playable_uri(uri) for uri in track_uris]
 
-        # Confirm this destructive op, but only when the client actually
-        # advertises elicitation support. If it doesn't, proceed so this core
-        # op never hard-fails on capability-poor clients. If it does support
-        # elicitation and the prompt errors, we let that propagate rather than
-        # silently deleting — an unconfirmed destructive edit must not slip through.
-        if ctx is not None and ctx.session.check_client_capability(
-            ClientCapabilities(elicitation=ElicitationCapability())
+        # Decline, cancel, or accepting with the box unticked all keep the tracks.
+        if not (
+            isinstance(confirmation, AcceptedElicitation) and confirmation.data.confirm
         ):
-            response = await ctx.elicit(
-                message=(
-                    f"Remove {len(uris)} track(s) from playlist {playlist_id}? "
-                    "This cannot be undone."
-                ),
-                schema=RemovalConfirmation,
+            return ActionResult(
+                status="cancelled",
+                message="Removal cancelled by user",
             )
-            confirmed = response.action == "accept" and bool(
-                response.data and response.data.confirm
-            )
-            if not confirmed:
-                return ActionResult(
-                    status="cancelled",
-                    message="Removal cancelled by user",
-                )
 
         logger.info(f"🚮 Removing {len(uris)} tracks from playlist {playlist_id}")
         result = spotify_api.playlist_remove_items(spotify_client, playlist_id, uris)
@@ -1569,11 +1600,11 @@ async def remove_tracks_from_playlist(
 @mcp.tool(
     title="Edit Playlist Details",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
+        read_only_hint=False,
         # Overwrites existing metadata, so clients should confirm it.
-        destructiveHint=True,
-        idempotentHint=True,
-        openWorldHint=True,
+        destructive_hint=True,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1621,11 +1652,11 @@ def update_playlist_details(
 @mcp.tool(
     title="Reorder Playlist",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
+        read_only_hint=False,
         # Rewrites existing track order in place, so clients should confirm it.
-        destructiveHint=True,
-        idempotentHint=False,
-        openWorldHint=True,
+        destructive_hint=True,
+        idempotent_hint=False,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1686,7 +1717,7 @@ def reorder_playlist(
 @mcp.tool(
     title="Get Album",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1740,7 +1771,7 @@ def get_album(album_ids: str | list[str]) -> AlbumInfo:
 @mcp.tool(
     title="Get Liked Songs",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1803,10 +1834,10 @@ def _library_write(
 @mcp.tool(
     title="Like Tracks",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1831,10 +1862,10 @@ def save_tracks(track_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Unlike Tracks",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1879,7 +1910,7 @@ def _membership(
 @mcp.tool(
     title="Check Liked Songs",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1908,7 +1939,7 @@ def check_saved_tracks(track_ids: list[str]) -> MembershipStatus:
 @mcp.tool(
     title="Check Saved Albums",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1936,7 +1967,7 @@ def check_saved_albums(album_ids: list[str]) -> MembershipStatus:
 @mcp.tool(
     title="Check Followed Artists",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -1965,7 +1996,7 @@ def check_following_artists(artist_ids: list[str]) -> MembershipStatus:
 @mcp.tool(
     title="Get Saved Albums",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2012,10 +2043,10 @@ def get_saved_albums(limit: int = 20, offset: int = 0) -> SavedAlbums:
 @mcp.tool(
     title="Save Albums",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2040,10 +2071,10 @@ def save_albums(album_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Remove Saved Albums",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2068,7 +2099,7 @@ def remove_saved_albums(album_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Get Followed Artists",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2106,10 +2137,10 @@ def get_followed_artists(limit: int = 20, after: str | None = None) -> FollowedA
 @mcp.tool(
     title="Follow Artists",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2134,10 +2165,10 @@ def follow_artists(artist_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Unfollow Artists",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2162,10 +2193,10 @@ def unfollow_artists(artist_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Follow Playlist",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2187,10 +2218,10 @@ def follow_playlist(playlist_id: str) -> ActionResult:
 @mcp.tool(
     title="Unfollow Playlist",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2215,7 +2246,7 @@ def unfollow_playlist(playlist_id: str) -> ActionResult:
 @mcp.tool(
     title="Get Saved Shows",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2262,10 +2293,10 @@ def get_saved_shows(limit: int = 20, offset: int = 0) -> SavedShows:
 @mcp.tool(
     title="Save Shows",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2290,10 +2321,10 @@ def save_shows(show_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Remove Saved Shows",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2318,7 +2349,7 @@ def remove_saved_shows(show_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Check Saved Shows",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2344,7 +2375,7 @@ def check_saved_shows(show_ids: list[str]) -> MembershipStatus:
 @mcp.tool(
     title="Check Saved Episodes",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2370,7 +2401,7 @@ def check_saved_episodes(episode_ids: list[str]) -> MembershipStatus:
 @mcp.tool(
     title="Get Show Episodes",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2416,7 +2447,7 @@ def get_show_episodes(show_id: str, limit: int = 20, offset: int = 0) -> Episode
 @mcp.tool(
     title="Get Saved Episodes",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2463,10 +2494,10 @@ def get_saved_episodes(limit: int = 20, offset: int = 0) -> EpisodeList:
 @mcp.tool(
     title="Save Episodes",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2491,10 +2522,10 @@ def save_episodes(episode_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Remove Saved Episodes",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2519,7 +2550,7 @@ def remove_saved_episodes(episode_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Get Saved Audiobooks",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2574,7 +2605,7 @@ def get_saved_audiobooks(limit: int = 20, offset: int = 0) -> SavedAudiobooks:
 @mcp.tool(
     title="Check Saved Audiobooks",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2600,10 +2631,10 @@ def check_saved_audiobooks(audiobook_ids: list[str]) -> MembershipStatus:
 @mcp.tool(
     title="Save Audiobooks",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2628,10 +2659,10 @@ def save_audiobooks(audiobook_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Remove Saved Audiobooks",
     annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=True,
+        open_world_hint=True,
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2656,7 +2687,7 @@ def remove_saved_audiobooks(audiobook_ids: list[str]) -> ActionResult:
 @mcp.tool(
     title="Recently Played",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
@@ -2691,7 +2722,7 @@ def get_recently_played(limit: int = 20) -> RecentlyPlayed:
 @mcp.tool(
     title="Top Artists and Tracks",
     annotations=ToolAnnotations(
-        readOnlyHint=True, idempotentHint=True, openWorldHint=True
+        read_only_hint=True, idempotent_hint=True, open_world_hint=True
     ),
     icons=[SPOTIFY_ICON],
 )
